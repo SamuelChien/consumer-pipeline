@@ -1,0 +1,33 @@
+{
+  "name": "consumer-pipeline",
+  "version": "1.0.0",
+  "description": "Unified Kafka consumer pipeline — ChromaDB, ClickHouse, Wikipedia, Graph, Skill Updater, Eval",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "consumer:chromadb": "node src/consumers/chromadb/index.js",
+    "consumer:clickhouse": "node src/consumers/clickhouse/index.js",
+    "consumer:wikipedia": "node src/consumers/wikipedia/index.js",
+    "consumer:graph": "node src/consumers/graph/index.js",
+    "consumer:skill-updater": "node src/consumers/skill-updater/index.js",
+    "consumer:eval": "node src/consumers/eval/index.js",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "chromadb": "^1.9.2",
+    "@clickhouse/client": "^1.8.1",
+    "neo4j-driver": "^5.27.0",
+    "@anthropic-ai/sdk": "^0.98.0",
+    "winston": "^3.11.0",
+    "glob": "^10.3.10",
+    "js-yaml": "^4.1.0",
+    "marked": "^12.0.0",
+    "natural": "^7.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
