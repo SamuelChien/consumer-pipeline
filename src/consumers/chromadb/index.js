@@ -1,101 +1,116 @@
-import { ChromaClient } from 'chromadb';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
-import { chunkByHeadings, chunkText } from '../../shared/chunker.js';
 import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('chromadb-consumer');
 
+class ChromaHTTPClient {
+  constructor(baseUrl) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.apiBase = '/api/v2/tenants/default_tenant/databases/default_database';
+  }
+
+  async request(method, path, body) {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`ChromaDB ${method} ${path}: ${res.status} ${text.slice(0, 200)}`);
+    }
+    return res.json();
+  }
+
+  async heartbeat() {
+    return this.request('GET', '/api/v1/heartbeat');
+  }
+
+  async getOrCreateCollection(name) {
+    const result = await this.request('POST', `${this.apiBase}/collections?get_or_create=true`, {
+      name,
+      metadata: { 'hnsw:space': 'cosine' },
+      get_or_create: true,
+    });
+    return result.id;
+  }
+
+  async upsert(collectionId, ids, documents, metadatas) {
+    await this.request('POST', `${this.apiBase}/collections/${collectionId}/upsert`, {
+      ids,
+      documents,
+      metadatas,
+    });
+  }
+}
+
 class ChromaDBConsumer {
   constructor() {
-    this.client = new ChromaClient({ path: config.chromadb.url });
-    this.skillCollection = null;
-    this.sessionCollection = null;
+    this.client = new ChromaHTTPClient(config.chromadb.url);
+    this.skillCollectionId = null;
+    this.sessionCollectionId = null;
     this.stats = { skillChunks: 0, sessionChunks: 0 };
   }
 
   async init() {
-    this.skillCollection = await this.client.getOrCreateCollection({
-      name: config.chromadb.collectionSkillChunks,
-      metadata: { 'hnsw:space': 'cosine' },
+    this.skillCollectionId = await this.client.getOrCreateCollection(config.chromadb.collectionSkillChunks);
+    this.sessionCollectionId = await this.client.getOrCreateCollection(config.chromadb.collectionSessionChunks);
+    logger.info('ChromaDB collections initialized', {
+      skills: this.skillCollectionId,
+      sessions: this.sessionCollectionId,
     });
-
-    this.sessionCollection = await this.client.getOrCreateCollection({
-      name: config.chromadb.collectionSessionChunks,
-      metadata: { 'hnsw:space': 'cosine' },
-    });
-
-    logger.info('ChromaDB collections initialized');
   }
 
   async handleSkillAnalyzed({ key, value }) {
     const skill = value;
     const skillId = skill.id || key;
+    const doc = (skill.description || '') + '\n' + (skill.body || '').slice(0, 3000);
+    if (!doc.trim()) return;
 
-    const chunks = chunkByHeadings(skill.body || '', {
+    const meta = {
       skillId,
-      name: skill.name,
+      name: skill.name || skillId,
       category: skill.analysis?.categories?.primary || skill.category || 'uncategorized',
       tier: skill.tier || 'standard',
-      platforms: (skill.platforms || []).join(','),
-      qualityScore: String(skill.analysis?.qualityScore?.score || 0),
-      tags: (skill.tags || []).join(','),
-    });
+      tags: (skill.tags || []).slice(0, 5).join(','),
+    };
 
-    if (chunks.length === 0) return;
+    await this.client.upsert(this.skillCollectionId, [skillId], [doc], [meta]);
+    this.stats.skillChunks++;
 
-    const ids = chunks.map((_, i) => `${skillId}::chunk-${i}`);
-    const documents = chunks.map(c => c.text);
-    const metadatas = chunks.map(c => c.metadata);
-
-    await this.skillCollection.upsert({ ids, documents, metadatas });
-    this.stats.skillChunks += chunks.length;
-
-    logger.info(`Indexed skill ${skillId}`, { chunks: chunks.length, total: this.stats.skillChunks });
+    if (this.stats.skillChunks % 50 === 0) {
+      logger.info(`Skills indexed: ${this.stats.skillChunks}`);
+    }
   }
 
   async handleSessionAnalyzed({ key, value }) {
     const session = value;
     const sessionId = session.sessionId || key;
+    const analysis = session.analysis || {};
 
-    const textParts = [];
-    if (session.analysis?.topics?.length) {
-      textParts.push(`Topics: ${session.analysis.topics.map(t => t.topic).join(', ')}`);
-    }
-    if (session.analysis?.categories) {
-      textParts.push(`Category: ${session.analysis.categories.primary}`);
-    }
-    if (session.analysis?.toolUsage?.tools?.length) {
-      textParts.push(`Tools used: ${session.analysis.toolUsage.tools.map(t => `${t.name}(${t.count})`).join(', ')}`);
-    }
-    if (session.analysis?.filesAccessed?.length) {
-      textParts.push(`Files: ${session.analysis.filesAccessed.slice(0, 20).map(f => f.path).join(', ')}`);
-    }
-    if (session.analysis?.commands?.topBinaries?.length) {
-      textParts.push(`Commands: ${session.analysis.commands.topBinaries.map(c => c.binary).join(', ')}`);
-    }
+    const doc = [
+      analysis.categories?.primary || '',
+      (analysis.topics || []).map(t => t.topic).join(', '),
+      (analysis.toolUsage?.tools || []).map(t => t.name).join(', '),
+    ].filter(Boolean).join('. ');
 
-    const summary = textParts.join('\n');
-    if (!summary) return;
+    if (!doc) return;
 
-    const chunks = chunkText(summary, {
+    const meta = {
       sessionId,
       project: session.project || 'unknown',
-      category: session.analysis?.categories?.primary || 'unknown',
-      complexity: session.analysis?.complexity?.level || 'unknown',
-      durationMinutes: String(session.analysis?.duration?.minutes || 0),
-      totalTokens: String(session.analysis?.tokenUsage?.totalTokens || 0),
-    });
+      category: analysis.categories?.primary || 'unknown',
+      complexity: analysis.complexity?.level || 'unknown',
+    };
 
-    const ids = chunks.map((_, i) => `${sessionId}::chunk-${i}`);
-    const documents = chunks.map(c => c.text);
-    const metadatas = chunks.map(c => c.metadata);
+    await this.client.upsert(this.sessionCollectionId, [sessionId], [doc], [meta]);
+    this.stats.sessionChunks++;
 
-    await this.sessionCollection.upsert({ ids, documents, metadatas });
-    this.stats.sessionChunks += chunks.length;
-
-    logger.info(`Indexed session ${sessionId}`, { chunks: chunks.length, total: this.stats.sessionChunks });
+    if (this.stats.sessionChunks % 20 === 0) {
+      logger.info(`Sessions indexed: ${this.stats.sessionChunks}`);
+    }
   }
 }
 

@@ -22,7 +22,7 @@ export const config = {
   },
 
   chromadb: {
-    url: process.env.CHROMADB_URL || (isGKE ? 'http://chromadb-service:8000' : 'http://localhost:8000'),
+    url: process.env.CHROMADB_URL || (isGKE ? 'http://chromadb-service:8000' : 'http://localhost:8100'),
     collectionSkillChunks: 'skill_chunks',
     collectionSessionChunks: 'session_chunks',
   },

@@ -14,7 +14,11 @@ export class KafkaConsumerGroup {
     }
 
     this.kafka = new Kafka(kafkaConfig);
-    this.consumer = this.kafka.consumer({ groupId });
+    this.consumer = this.kafka.consumer({
+      groupId,
+      maxBytes: 1048576,
+      maxBytesPerPartition: 524288,
+    });
     this.logger = logger;
     this.handlers = new Map();
 
@@ -35,25 +39,30 @@ export class KafkaConsumerGroup {
     this.logger.info('Kafka consumer connected');
 
     for (const topic of this.handlers.keys()) {
-      await this.consumer.subscribe({ topic, fromBeginning: true });
+      await this.consumer.subscribe({ topic, fromBeginning: process.env.KAFKA_FROM_BEGINNING === 'true' });
       this.logger.info(`Subscribed to ${topic}`);
     }
 
     await this.consumer.run({
-      eachMessage: async ({ topic, partition, message }) => {
-        const handler = this.handlers.get(topic);
-        if (!handler) return;
+      eachBatchAutoResolve: true,
+      eachBatch: async ({ batch, resolveOffset, heartbeat }) => {
+        for (const message of batch.messages) {
+          const handler = this.handlers.get(batch.topic);
+          if (!handler) continue;
 
-        try {
-          const value = JSON.parse(message.value.toString());
-          const key = message.key?.toString();
-          await handler({ key, value, partition, topic });
-        } catch (err) {
-          this.logger.error(`Error processing message from ${topic}`, {
-            error: err.message,
-            partition,
-            offset: message.offset,
-          });
+          try {
+            const value = JSON.parse(message.value.toString());
+            const key = message.key?.toString();
+            await handler({ key, value, partition: batch.partition, topic: batch.topic });
+          } catch (err) {
+            this.logger.error(`Error processing message from ${batch.topic}`, {
+              error: err.message,
+              partition: batch.partition,
+              offset: message.offset,
+            });
+          }
+          resolveOffset(message.offset);
+          await heartbeat();
         }
       },
     });
