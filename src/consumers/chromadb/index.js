@@ -9,7 +9,7 @@ const logger = createLogger('chromadb-consumer');
 
 class ChromaDBConsumer {
   constructor() {
-    this.client = new ChromaClient({ baseUrl: config.chromadb.url });
+    this.client = new ChromaClient({ path: config.chromadb.url });
     this.skillCollection = null;
     this.sessionCollection = null;
     this.stats = { skillChunks: 0, sessionChunks: 0 };
