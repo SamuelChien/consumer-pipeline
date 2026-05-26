@@ -6,6 +6,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci --production
 
 COPY src/ src/
+COPY scripts/ scripts/
 COPY infra/ infra/
 
 RUN mkdir -p /data/output
