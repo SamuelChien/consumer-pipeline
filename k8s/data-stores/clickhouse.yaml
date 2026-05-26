@@ -1,0 +1,166 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: consumer-pipeline
+spec:
+  serviceName: clickhouse-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:24.1
+          ports:
+            - containerPort: 8123
+              name: http
+            - containerPort: 9000
+              name: native
+          env:
+            - name: CLICKHOUSE_USER
+              value: "default"
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: consumer-pipeline-secrets
+                  key: CLICKHOUSE_PASSWORD
+            - name: CLICKHOUSE_DB
+              value: "consumer"
+          volumeMounts:
+            - name: clickhouse-data
+              mountPath: /var/lib/clickhouse
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+      volumes:
+        - name: init-sql
+          configMap:
+            name: clickhouse-init
+  volumeClaimTemplates:
+    - metadata:
+        name: clickhouse-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse-service
+  namespace: consumer-pipeline
+spec:
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: 8123
+    - name: native
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-init
+  namespace: consumer-pipeline
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS consumer;
+
+    CREATE TABLE IF NOT EXISTS consumer.skills (
+        id String,
+        name String,
+        description String,
+        category String,
+        secondary_category Nullable(String),
+        tier String DEFAULT 'standard',
+        risk String DEFAULT 'safe',
+        author String DEFAULT 'unknown',
+        version String DEFAULT '1.0.0',
+        platforms Array(String),
+        tags Array(String),
+        allowed_tools Array(String),
+        quality_score UInt8 DEFAULT 0,
+        quality_grade String DEFAULT 'F',
+        complexity_level String DEFAULT 'basic',
+        body_length UInt32 DEFAULT 0,
+        heading_count UInt16 DEFAULT 0,
+        code_block_count UInt16 DEFAULT 0,
+        keywords Array(String),
+        source_collection String DEFAULT '',
+        updated_at DateTime DEFAULT now()
+    ) ENGINE = ReplacingMergeTree(updated_at)
+    ORDER BY id;
+
+    CREATE TABLE IF NOT EXISTS consumer.skill_dependencies (
+        skill_id String,
+        depends_on String,
+        dependency_type String DEFAULT 'depends_on',
+        confidence Float32 DEFAULT 0.5,
+        created_at DateTime DEFAULT now()
+    ) ENGINE = MergeTree()
+    ORDER BY (skill_id, depends_on);
+
+    CREATE TABLE IF NOT EXISTS consumer.skill_entities (
+        skill_id String,
+        entity_name String,
+        entity_type String,
+        created_at DateTime DEFAULT now()
+    ) ENGINE = MergeTree()
+    ORDER BY (entity_type, entity_name, skill_id);
+
+    CREATE TABLE IF NOT EXISTS consumer.sessions (
+        session_id String,
+        project String,
+        primary_category String DEFAULT 'unknown',
+        secondary_category Nullable(String),
+        complexity_level String DEFAULT 'simple',
+        message_count UInt32 DEFAULT 0,
+        total_tokens UInt64 DEFAULT 0,
+        input_tokens UInt64 DEFAULT 0,
+        output_tokens UInt64 DEFAULT 0,
+        cache_hit_rate Float32 DEFAULT 0,
+        total_tool_calls UInt32 DEFAULT 0,
+        unique_tools UInt16 DEFAULT 0,
+        files_accessed UInt32 DEFAULT 0,
+        duration_minutes Float32 DEFAULT 0,
+        error_count UInt16 DEFAULT 0,
+        session_date Date DEFAULT today(),
+        created_at DateTime DEFAULT now()
+    ) ENGINE = ReplacingMergeTree(created_at)
+    ORDER BY session_id;
+
+    CREATE TABLE IF NOT EXISTS consumer.session_tools (
+        session_id String,
+        tool_name String,
+        call_count UInt32 DEFAULT 1,
+        created_at DateTime DEFAULT now()
+    ) ENGINE = MergeTree()
+    ORDER BY (tool_name, session_id);
+
+    CREATE TABLE IF NOT EXISTS consumer.session_files (
+        session_id String,
+        file_path String,
+        reads UInt16 DEFAULT 0,
+        writes UInt16 DEFAULT 0,
+        edits UInt16 DEFAULT 0,
+        created_at DateTime DEFAULT now()
+    ) ENGINE = MergeTree()
+    ORDER BY (file_path, session_id);

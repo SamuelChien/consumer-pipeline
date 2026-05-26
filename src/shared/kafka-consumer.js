@@ -3,14 +3,26 @@ import { config } from './config.js';
 
 export class KafkaConsumerGroup {
   constructor(groupId, logger) {
-    this.kafka = new Kafka({
+    const kafkaConfig = {
       clientId: config.kafka.clientId,
       brokers: config.kafka.brokers,
       retry: { retries: 5, initialRetryTime: 1000 },
-    });
+    };
+
+    if (config.kafka.ssl) {
+      kafkaConfig.ssl = true;
+    }
+
+    this.kafka = new Kafka(kafkaConfig);
     this.consumer = this.kafka.consumer({ groupId });
     this.logger = logger;
     this.handlers = new Map();
+
+    logger.info('Kafka config', {
+      brokers: config.kafka.brokers,
+      ssl: config.kafka.ssl,
+      groupId,
+    });
   }
 
   on(topic, handler) {

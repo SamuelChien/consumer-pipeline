@@ -1,0 +1,237 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chromadb-consumer
+  namespace: consumer-pipeline
+  labels:
+    app: consumer-pipeline
+    consumer: chromadb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      consumer: chromadb
+  template:
+    metadata:
+      labels:
+        app: consumer-pipeline
+        consumer: chromadb
+    spec:
+      containers:
+        - name: chromadb-consumer
+          image: consumer-pipeline:latest
+          command: ["node", "src/consumers/chromadb/index.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
+            - secretRef:
+                name: consumer-pipeline-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clickhouse-consumer
+  namespace: consumer-pipeline
+  labels:
+    app: consumer-pipeline
+    consumer: clickhouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      consumer: clickhouse
+  template:
+    metadata:
+      labels:
+        app: consumer-pipeline
+        consumer: clickhouse
+    spec:
+      containers:
+        - name: clickhouse-consumer
+          image: consumer-pipeline:latest
+          command: ["node", "src/consumers/clickhouse/index.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
+            - secretRef:
+                name: consumer-pipeline-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wikipedia-consumer
+  namespace: consumer-pipeline
+  labels:
+    app: consumer-pipeline
+    consumer: wikipedia
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      consumer: wikipedia
+  template:
+    metadata:
+      labels:
+        app: consumer-pipeline
+        consumer: wikipedia
+    spec:
+      containers:
+        - name: wikipedia-consumer
+          image: consumer-pipeline:latest
+          command: ["node", "src/consumers/wikipedia/index.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
+            - secretRef:
+                name: consumer-pipeline-secrets
+          volumeMounts:
+            - name: wiki-output
+              mountPath: /data/output
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: wiki-output
+          persistentVolumeClaim:
+            claimName: consumer-output-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graph-consumer
+  namespace: consumer-pipeline
+  labels:
+    app: consumer-pipeline
+    consumer: graph
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      consumer: graph
+  template:
+    metadata:
+      labels:
+        app: consumer-pipeline
+        consumer: graph
+    spec:
+      containers:
+        - name: graph-consumer
+          image: consumer-pipeline:latest
+          command: ["node", "src/consumers/graph/index.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
+            - secretRef:
+                name: consumer-pipeline-secrets
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skill-updater-consumer
+  namespace: consumer-pipeline
+  labels:
+    app: consumer-pipeline
+    consumer: skill-updater
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      consumer: skill-updater
+  template:
+    metadata:
+      labels:
+        app: consumer-pipeline
+        consumer: skill-updater
+    spec:
+      containers:
+        - name: skill-updater-consumer
+          image: consumer-pipeline:latest
+          command: ["node", "src/consumers/skill-updater/index.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
+            - secretRef:
+                name: consumer-pipeline-secrets
+          volumeMounts:
+            - name: skills-output
+              mountPath: /data/output
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: skills-output
+          persistentVolumeClaim:
+            claimName: consumer-output-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-consumer
+  namespace: consumer-pipeline
+  labels:
+    app: consumer-pipeline
+    consumer: eval
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      consumer: eval
+  template:
+    metadata:
+      labels:
+        app: consumer-pipeline
+        consumer: eval
+    spec:
+      containers:
+        - name: eval-consumer
+          image: consumer-pipeline:latest
+          command: ["node", "src/consumers/eval/index.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
+            - secretRef:
+                name: consumer-pipeline-secrets
+          volumeMounts:
+            - name: eval-output
+              mountPath: /data/output
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: eval-output
+          persistentVolumeClaim:
+            claimName: consumer-output-pvc

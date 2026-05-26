@@ -1,28 +1,9 @@
 version: '3.8'
 
+# Data stores only — Kafka is on GKE (email-intelligence-cluster)
+# For local dev, use docker-compose.local.yml override to add a local Kafka
+
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-    volumes:
-      - zookeeper-data:/var/lib/zookeeper/data
-
-  kafka:
-    image: confluentinc/cp-kafka:7.4.0
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-
   chromadb:
     image: chromadb/chroma:0.5.23
     ports:
@@ -65,19 +46,7 @@ services:
       - redis-data:/data
     command: redis-server --appendonly yes
 
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: consumer-pipeline
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-    depends_on:
-      - kafka
-
 volumes:
-  zookeeper-data:
-  kafka-data:
   chromadb-data:
   clickhouse-data:
   neo4j-data:

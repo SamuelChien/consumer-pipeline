@@ -1,6 +1,6 @@
 # Consumer Pipeline
 
-Unified Kafka consumer pipeline that reads from the sessions and skills producer topics and writes to purpose-built data stores.
+Unified Kafka consumer pipeline that reads from the sessions and skills producer topics and writes to purpose-built data stores. Deploys to the existing GKE cluster (`gke_blobfish-ai-429200_us-central1-a_email-intelligence-cluster`), sharing Kafka with the email-intelligence pipeline.
 
 ## Architecture
 
@@ -14,28 +14,29 @@ Unified Kafka consumer pipeline that reads from the sessions and skills producer
 │ sessions.tools        │     │ skills.entities       │
 │ sessions.files        │     │ skills.dependencies   │
 └───────────┬───────────┘     └───────────┬───────────┘
-            │         ┌───────────┐       │
-            └────────►│   Kafka   │◄──────┘
-                      └─────┬─────┘
-         ┌──────────────────┼──────────────────┐
-         │                  │                  │
-    ┌────▼─────┐     ┌─────▼────┐     ┌──────▼──────┐
-    │ ChromaDB │     │ClickHouse│     │  Wikipedia  │
-    │ Consumer │     │ Consumer │     │  Consumer   │
-    │          │     │          │     │             │
-    │ Vector   │     │ Analytics│     │ Articles +  │
-    │ chunks   │     │ tables   │     │ keyword     │
-    │ for RAG  │     │ + views  │     │ linking     │
-    └──────────┘     └──────────┘     └─────────────┘
-         │                  │                  │
-    ┌────▼─────┐     ┌─────▼────┐     ┌──────▼──────┐
-    │  Graph   │     │  Skill   │     │    Eval     │
-    │ Consumer │     │ Updater  │     │  Consumer   │
-    │          │     │ Consumer │     │             │
-    │ BM25 +   │     │ Generate │     │ Test cases  │
-    │ PageRank │     │ new      │     │ + trigger   │
-    │ Neo4j    │     │ skills   │     │ validation  │
-    └──────────┘     └──────────┘     └─────────────┘
+            │    ┌────────────────────┐    │
+            └───►│ Kafka (GKE)       │◄───┘
+                 │ kafka-service:9092 │
+                 └────────┬──────────┘
+      ┌──────────────────┬┴─────────────────┐
+      │                  │                  │
+ ┌────▼─────┐     ┌─────▼────┐     ┌──────▼──────┐
+ │ ChromaDB │     │ClickHouse│     │  Wikipedia  │
+ │ Consumer │     │ Consumer │     │  Consumer   │
+ │          │     │          │     │             │
+ │ Vector   │     │ Analytics│     │ Articles +  │
+ │ chunks   │     │ tables   │     │ keyword     │
+ │ for RAG  │     │ + views  │     │ linking     │
+ └──────────┘     └──────────┘     └─────────────┘
+      │                  │                  │
+ ┌────▼─────┐     ┌─────▼────┐     ┌──────▼──────┐
+ │  Graph   │     │  Skill   │     │    Eval     │
+ │ Consumer │     │ Updater  │     │  Consumer   │
+ │          │     │ Consumer │     │             │
+ │ BM25 +   │     │ Generate │     │ Test cases  │
+ │ PageRank │     │ new      │     │ + trigger   │
+ │ Neo4j    │     │ skills   │     │ validation  │
+ └──────────┘     └──────────┘     └─────────────┘
 ```
 
 ## Consumers
@@ -49,45 +50,60 @@ Unified Kafka consumer pipeline that reads from the sessions and skills producer
 | **Skill Updater** | `skills.analyzed`, `sessions.analyzed` | Generated SKILL.md files | Creates new script/fundamental/orchestration skills based on gaps detected |
 | **Eval** | `skills.analyzed`, `sessions.analyzed` | JSON test suites | Test cases per skill + trigger validation tests from real session patterns |
 
-## Quick Start
+## Deploy to GKE
 
 ```bash
-# Start infrastructure
-npm run infra:up
+# Authenticate
+gcloud container clusters get-credentials email-intelligence-cluster \
+  --zone us-central1-a --project blobfish-ai-429200
 
-# Install dependencies
+# Build and push image
+docker build -t gcr.io/blobfish-ai-429200/consumer-pipeline:latest .
+docker push gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+
+# Deploy data stores
+kubectl apply -f k8s/base/namespace.yaml
+kubectl apply -f k8s/base/secrets.yaml
+kubectl apply -f k8s/base/configmap.yaml
+kubectl apply -f k8s/data-stores/
+
+# Deploy consumers
+kubectl apply -f k8s/base/consumers.yaml
+```
+
+## Local Development
+
+```bash
+# Start data stores (ChromaDB, ClickHouse, Neo4j, Redis) + local Kafka
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+
 npm install
-
-# Run all consumers
 npm start
-
-# Or run individually
-npm run consumer:chromadb
-npm run consumer:clickhouse
-npm run consumer:wikipedia
-npm run consumer:graph
-npm run consumer:skill-updater
-npm run consumer:eval
 ```
 
 ## Infrastructure
 
-- **Kafka** — localhost:9092 (shared with producer pipelines)
-- **ChromaDB** — localhost:8000
-- **ClickHouse** — localhost:8123 (HTTP), localhost:9000 (native)
-- **Neo4j** — localhost:7687 (bolt), localhost:7474 (browser)
-- **Redis** — localhost:6379
-- **Kafka UI** — localhost:8080
+**GKE (production):**
+- Kafka — `kafka-service.email-intelligence.svc.cluster.local:9092` (shared cluster)
+- ChromaDB — `chromadb-service.consumer-pipeline:8000`
+- ClickHouse — `clickhouse-service.consumer-pipeline:8123`
+- Neo4j — `neo4j-service.consumer-pipeline:7687`
+
+**Local dev:**
+- Kafka — `localhost:9092` (via docker-compose.local.yml)
+- ChromaDB — `localhost:8000`
+- ClickHouse — `localhost:8123`
+- Neo4j — `localhost:7687`
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `KAFKA_BROKERS` | `localhost:9092` | Kafka broker addresses |
-| `CHROMADB_URL` | `http://localhost:8000` | ChromaDB endpoint |
-| `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse HTTP endpoint |
-| `CLICKHOUSE_PASSWORD` | `consumer123` | ClickHouse password |
-| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j bolt URI |
-| `NEO4J_PASSWORD` | `consumer123` | Neo4j password |
-| `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Model for skill generation + eval |
-| `OUTPUT_DIR` | `./output` | Output directory for wiki/skills/evals |
+| Variable | Default (local) | GKE | Description |
+|----------|----------------|-----|-------------|
+| `KAFKA_ENV` | — | `gke` | Auto-detects in-cluster when set |
+| `KAFKA_BROKERS` | `localhost:9092` | `kafka-service:9092` | Kafka bootstrap servers |
+| `KAFKA_SSL` | `false` | `false` | Enable SSL for managed Kafka |
+| `CHROMADB_URL` | `http://localhost:8000` | auto | ChromaDB endpoint |
+| `CLICKHOUSE_URL` | `http://localhost:8123` | auto | ClickHouse HTTP endpoint |
+| `NEO4J_URI` | `bolt://localhost:7687` | auto | Neo4j bolt URI |
+| `ANTHROPIC_API_KEY` | — | secret | Required for skill-updater + eval consumers |
+| `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | same | Model for AI consumers |

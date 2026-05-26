@@ -12,8 +12,12 @@
     "consumer:skill-updater": "node src/consumers/skill-updater/index.js",
     "consumer:eval": "node src/consumers/eval/index.js",
     "infra:up": "docker compose up -d",
+    "infra:up:local": "docker compose -f docker-compose.yml -f docker-compose.local.yml up -d",
     "infra:down": "docker compose down",
-    "infra:reset": "docker compose down -v && docker compose up -d"
+    "infra:reset": "docker compose down -v && docker compose up -d",
+    "docker:build": "docker build -t gcr.io/blobfish-ai-429200/consumer-pipeline:latest .",
+    "docker:push": "docker push gcr.io/blobfish-ai-429200/consumer-pipeline:latest",
+    "k8s:deploy": "kubectl apply -f k8s/base/namespace.yaml && kubectl apply -f k8s/base/secrets.yaml && kubectl apply -f k8s/base/configmap.yaml && kubectl apply -f k8s/data-stores/ && kubectl apply -f k8s/base/consumers.yaml"
   },
   "dependencies": {
     "kafkajs": "^2.2.4",
