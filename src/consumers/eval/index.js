@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('eval-consumer');
 
@@ -226,6 +227,7 @@ async function main() {
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
   await kafka.start();
+  startHealthServer(3006);
 
   process.on('SIGINT', async () => {
     if (consumer.sessionSkillMap.size > 0) {

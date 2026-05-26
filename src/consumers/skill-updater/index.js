@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('skill-updater-consumer');
 
@@ -203,6 +204,7 @@ async function main() {
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg));
 
   await kafka.start();
+  startHealthServer(3005);
 
   process.on('SIGINT', async () => {
     if (consumer.sessionBuffer.length > 0) {

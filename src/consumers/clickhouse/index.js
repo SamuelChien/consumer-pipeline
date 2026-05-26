@@ -2,6 +2,7 @@ import { createClient } from '@clickhouse/client';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('clickhouse-consumer');
 
@@ -161,6 +162,10 @@ async function main() {
     .on(config.topics.sessionsFiles, (msg) => consumer.handleSessionFiles(msg));
 
   await kafka.start();
+
+  startHealthServer(3002, {
+    clickhouse: async () => { await consumer.client.ping(); },
+  });
 
   process.on('SIGINT', async () => {
     logger.info('Shutting down', consumer.stats);

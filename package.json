@@ -17,11 +17,15 @@
     "infra:reset": "docker compose down -v && docker compose up -d",
     "docker:build": "docker build -t gcr.io/blobfish-ai-429200/consumer-pipeline:latest .",
     "docker:push": "docker push gcr.io/blobfish-ai-429200/consumer-pipeline:latest",
-    "k8s:deploy": "kubectl apply -f k8s/base/namespace.yaml && kubectl apply -f k8s/base/secrets.yaml && kubectl apply -f k8s/base/configmap.yaml && kubectl apply -f k8s/data-stores/ && kubectl apply -f k8s/base/consumers.yaml"
+    "k8s:deploy": "kubectl apply -f k8s/base/namespace.yaml && kubectl apply -f k8s/base/secrets.yaml && kubectl apply -f k8s/base/configmap.yaml && kubectl apply -f k8s/data-stores/ && kubectl apply -f k8s/base/consumers.yaml",
+    "topics:provision": "node scripts/provision-topics.js",
+    "topics:list": "node -e \"import {Kafka} from 'kafkajs'; import {config} from './src/shared/config.js'; const k = new Kafka({clientId:'cli',brokers:config.kafka.brokers,ssl:config.kafka.ssl}); const a = k.admin(); await a.connect(); console.log(await a.listTopics()); await a.disconnect();\"",
+    "deploy": "bash scripts/deploy.sh",
+    "status": "kubectl -n consumer-pipeline get pods,svc,pvc"
   },
   "dependencies": {
     "kafkajs": "^2.2.4",
-    "chromadb": "^1.9.2",
+    "chromadb": "^3.4.3",
     "@clickhouse/client": "^1.8.1",
     "neo4j-driver": "^5.27.0",
     "@anthropic-ai/sdk": "^0.98.0",
@@ -29,7 +33,7 @@
     "glob": "^10.3.10",
     "js-yaml": "^4.1.0",
     "marked": "^12.0.0",
-    "natural": "^7.2.0"
+    "natural": "^8.1.1"
   },
   "engines": {
     "node": ">=18"

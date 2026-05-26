@@ -3,6 +3,7 @@ import { BM25 } from './bm25.js';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('graph-consumer');
 
@@ -285,6 +286,10 @@ async function main() {
   await kafka.start();
 
   setInterval(() => consumer.runRankingPass(), 5 * 60 * 1000);
+
+  startHealthServer(3004, {
+    neo4j: async () => { await consumer.driver.verifyConnectivity(); },
+  });
 
   process.on('SIGINT', async () => {
     await consumer.runRankingPass();

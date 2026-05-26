@@ -20,13 +20,28 @@ spec:
     spec:
       containers:
         - name: chromadb-consumer
-          image: consumer-pipeline:latest
+          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
           command: ["node", "src/consumers/chromadb/index.js"]
+          ports:
+            - containerPort: 3001
+              name: health
           envFrom:
             - configMapRef:
                 name: consumer-pipeline-config
             - secretRef:
                 name: consumer-pipeline-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 10
           resources:
             requests:
               memory: "256Mi"
@@ -56,13 +71,28 @@ spec:
     spec:
       containers:
         - name: clickhouse-consumer
-          image: consumer-pipeline:latest
+          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
           command: ["node", "src/consumers/clickhouse/index.js"]
+          ports:
+            - containerPort: 3002
+              name: health
           envFrom:
             - configMapRef:
                 name: consumer-pipeline-config
             - secretRef:
                 name: consumer-pipeline-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3002
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3002
+            initialDelaySeconds: 15
+            periodSeconds: 10
           resources:
             requests:
               memory: "256Mi"
@@ -92,15 +122,24 @@ spec:
     spec:
       containers:
         - name: wikipedia-consumer
-          image: consumer-pipeline:latest
+          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
           command: ["node", "src/consumers/wikipedia/index.js"]
+          ports:
+            - containerPort: 3003
+              name: health
           envFrom:
             - configMapRef:
                 name: consumer-pipeline-config
             - secretRef:
                 name: consumer-pipeline-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3003
+            initialDelaySeconds: 10
+            periodSeconds: 30
           volumeMounts:
-            - name: wiki-output
+            - name: output
               mountPath: /data/output
           resources:
             requests:
@@ -110,7 +149,7 @@ spec:
               memory: "512Mi"
               cpu: "500m"
       volumes:
-        - name: wiki-output
+        - name: output
           persistentVolumeClaim:
             claimName: consumer-output-pvc
 ---
@@ -135,13 +174,28 @@ spec:
     spec:
       containers:
         - name: graph-consumer
-          image: consumer-pipeline:latest
+          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
           command: ["node", "src/consumers/graph/index.js"]
+          ports:
+            - containerPort: 3004
+              name: health
           envFrom:
             - configMapRef:
                 name: consumer-pipeline-config
             - secretRef:
                 name: consumer-pipeline-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3004
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 3004
+            initialDelaySeconds: 15
+            periodSeconds: 10
           resources:
             requests:
               memory: "512Mi"
@@ -171,15 +225,24 @@ spec:
     spec:
       containers:
         - name: skill-updater-consumer
-          image: consumer-pipeline:latest
+          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
           command: ["node", "src/consumers/skill-updater/index.js"]
+          ports:
+            - containerPort: 3005
+              name: health
           envFrom:
             - configMapRef:
                 name: consumer-pipeline-config
             - secretRef:
                 name: consumer-pipeline-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3005
+            initialDelaySeconds: 10
+            periodSeconds: 30
           volumeMounts:
-            - name: skills-output
+            - name: output
               mountPath: /data/output
           resources:
             requests:
@@ -189,7 +252,7 @@ spec:
               memory: "512Mi"
               cpu: "500m"
       volumes:
-        - name: skills-output
+        - name: output
           persistentVolumeClaim:
             claimName: consumer-output-pvc
 ---
@@ -214,15 +277,24 @@ spec:
     spec:
       containers:
         - name: eval-consumer
-          image: consumer-pipeline:latest
+          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
           command: ["node", "src/consumers/eval/index.js"]
+          ports:
+            - containerPort: 3006
+              name: health
           envFrom:
             - configMapRef:
                 name: consumer-pipeline-config
             - secretRef:
                 name: consumer-pipeline-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3006
+            initialDelaySeconds: 10
+            periodSeconds: 30
           volumeMounts:
-            - name: eval-output
+            - name: output
               mountPath: /data/output
           resources:
             requests:
@@ -232,6 +304,6 @@ spec:
               memory: "512Mi"
               cpu: "500m"
       volumes:
-        - name: eval-output
+        - name: output
           persistentVolumeClaim:
             claimName: consumer-output-pvc
