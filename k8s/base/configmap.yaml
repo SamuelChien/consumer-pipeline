@@ -5,7 +5,7 @@ metadata:
   namespace: consumer-pipeline
 data:
   KAFKA_ENV: "gke"
-  KAFKA_BROKERS: "kafka-service.email-intelligence.svc.cluster.local:9092"
+  KAFKA_BROKERS: "kafka.kafka.svc.cluster.local:29092"
   KAFKA_SSL: "false"
 
   TOPIC_SESSIONS_RAW: "sessions.raw"

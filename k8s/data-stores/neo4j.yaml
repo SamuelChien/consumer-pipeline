@@ -27,6 +27,8 @@ spec:
               value: "neo4j/consumer123"
             - name: NEO4J_PLUGINS
               value: '["apoc"]'
+            - name: NEO4J_server_config_strict__validation_enabled
+              value: "false"
           volumeMounts:
             - name: neo4j-data
               mountPath: /data

@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: chromadb-consumer
-          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+          image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "src/consumers/chromadb/index.js"]
           ports:
             - containerPort: 3001
@@ -71,7 +71,7 @@ spec:
     spec:
       containers:
         - name: clickhouse-consumer
-          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+          image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "src/consumers/clickhouse/index.js"]
           ports:
             - containerPort: 3002
@@ -122,7 +122,7 @@ spec:
     spec:
       containers:
         - name: wikipedia-consumer
-          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+          image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "src/consumers/wikipedia/index.js"]
           ports:
             - containerPort: 3003
@@ -174,7 +174,7 @@ spec:
     spec:
       containers:
         - name: graph-consumer
-          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+          image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "src/consumers/graph/index.js"]
           ports:
             - containerPort: 3004
@@ -225,7 +225,7 @@ spec:
     spec:
       containers:
         - name: skill-updater-consumer
-          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+          image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "src/consumers/skill-updater/index.js"]
           ports:
             - containerPort: 3005
@@ -277,7 +277,7 @@ spec:
     spec:
       containers:
         - name: eval-consumer
-          image: gcr.io/blobfish-ai-429200/consumer-pipeline:latest
+          image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "src/consumers/eval/index.js"]
           ports:
             - containerPort: 3006
