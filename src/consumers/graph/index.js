@@ -3,9 +3,11 @@ import { BM25 } from './bm25.js';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { createMetrics } from '../../shared/metrics.js';
 import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('graph-consumer');
+const metrics = createMetrics('graph');
 
 class GraphConsumer {
   constructor() {

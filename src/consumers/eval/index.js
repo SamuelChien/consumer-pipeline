@@ -4,9 +4,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { createMetrics } from '../../shared/metrics.js';
 import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('eval-consumer');
+const metrics = createMetrics('eval');
 
 class EvalConsumer {
   constructor() {

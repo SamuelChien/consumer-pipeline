@@ -2,9 +2,11 @@ import { createClient } from '@clickhouse/client';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
+import { createMetrics } from '../../shared/metrics.js';
 import { startHealthServer } from '../../shared/health.js';
 
 const logger = createLogger('clickhouse-consumer');
+const metrics = createMetrics('clickhouse');
 
 class ClickHouseConsumer {
   constructor() {
@@ -49,6 +51,7 @@ class ClickHouseConsumer {
     });
 
     this.stats.skills++;
+    metrics.track('inserted', { itemId: skill.id || key, itemType: 'skill', project: skill.sourceCollection || '' });
     logger.info(`Inserted skill ${skill.id || key}`, { total: this.stats.skills });
   }
 
@@ -111,6 +114,7 @@ class ClickHouseConsumer {
     });
 
     this.stats.sessions++;
+    metrics.track('inserted', { itemId: session.sessionId || key, itemType: 'session', project: session.project || '' });
     logger.info(`Inserted session ${session.sessionId || key}`, { total: this.stats.sessions });
   }
 

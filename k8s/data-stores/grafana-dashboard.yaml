@@ -1,0 +1,162 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: consumer-pipeline
+data:
+  consumer-pipeline.json: |
+    {
+      "annotations": { "list": [] },
+      "title": "Consumer Pipeline",
+      "uid": "consumer-pipeline",
+      "version": 1,
+      "timezone": "browser",
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "templating": { "list": [] },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Consumer Status",
+          "type": "table",
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT consumer, status, messages_processed, errors, last_heartbeat FROM consumer.consumer_status FINAL ORDER BY consumer",
+            "format": "table"
+          }],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "status" }, "properties": [{ "id": "custom.displayMode", "value": "color-background" }, { "id": "mappings", "value": [{ "type": "value", "options": { "running": { "color": "green", "text": "RUNNING" } } }] }] },
+              { "matcher": { "id": "byName", "options": "errors" }, "properties": [{ "id": "thresholds", "value": { "steps": [{ "color": "green", "value": 0 }, { "color": "red", "value": 1 }] } }] }
+            ]
+          }
+        },
+        {
+          "id": 2,
+          "title": "Messages Processed / Minute",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT minute as time, consumer, events FROM consumer.metrics_per_minute_mv WHERE minute >= now() - INTERVAL 1 HOUR ORDER BY minute",
+            "format": "time_series"
+          }],
+          "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20 } } }
+        },
+        {
+          "id": 3,
+          "title": "Errors / Minute",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT minute as time, consumer, errors FROM consumer.metrics_per_minute_mv WHERE minute >= now() - INTERVAL 1 HOUR AND errors > 0 ORDER BY minute",
+            "format": "time_series"
+          }],
+          "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "red" }, "custom": { "fillOpacity": 30 } } }
+        },
+        {
+          "id": 4,
+          "title": "Total Items by Consumer",
+          "type": "bargauge",
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT consumer, sum(count) as total FROM consumer.consumer_metrics WHERE error = '' GROUP BY consumer ORDER BY total DESC",
+            "format": "table"
+          }],
+          "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "blue", "value": 0 }, { "color": "green", "value": 100 }] } } }
+        },
+        {
+          "id": 5,
+          "title": "Items by Type",
+          "type": "piechart",
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 14 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT item_type, count() as cnt FROM consumer.consumer_metrics WHERE item_type != '' GROUP BY item_type ORDER BY cnt DESC",
+            "format": "table"
+          }]
+        },
+        {
+          "id": 10,
+          "title": "Data Store Totals",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 24, "x": 0, "y": 20 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT 'Skills (ClickHouse)' as metric, count() as value FROM consumer.skills UNION ALL SELECT 'Sessions (ClickHouse)', count() FROM consumer.sessions UNION ALL SELECT 'Skill Entities', count() FROM consumer.skill_entities UNION ALL SELECT 'Session Tools', count() FROM consumer.session_tools",
+            "format": "table"
+          }],
+          "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "blue", "value": 0 }] } } }
+        },
+        {
+          "id": 11,
+          "title": "Skills by Category",
+          "type": "barchart",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT category, count() as cnt FROM consumer.skills GROUP BY category ORDER BY cnt DESC LIMIT 15",
+            "format": "table"
+          }]
+        },
+        {
+          "id": 12,
+          "title": "Sessions by Project",
+          "type": "barchart",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT project, count() as sessions, sum(total_tokens) as tokens FROM consumer.sessions GROUP BY project ORDER BY sessions DESC LIMIT 15",
+            "format": "table"
+          }]
+        },
+        {
+          "id": 13,
+          "title": "Top Tools Used in Sessions",
+          "type": "bargauge",
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 32 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT tool_name, sum(call_count) as calls FROM consumer.session_tools GROUP BY tool_name ORDER BY calls DESC LIMIT 10",
+            "format": "table"
+          }]
+        },
+        {
+          "id": 14,
+          "title": "Files Created / Processed per Consumer",
+          "type": "table",
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 32 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT consumer, item_type, count() as items_created, min(ts) as first_seen, max(ts) as last_seen FROM consumer.consumer_metrics WHERE error = '' GROUP BY consumer, item_type ORDER BY consumer, items_created DESC",
+            "format": "table"
+          }]
+        },
+        {
+          "id": 15,
+          "title": "Skill Quality Distribution",
+          "type": "histogram",
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 38 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT quality_score FROM consumer.skills",
+            "format": "table"
+          }]
+        },
+        {
+          "id": 16,
+          "title": "Recent Activity Feed",
+          "type": "table",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 44 },
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "${DS_CLICKHOUSE}" },
+          "targets": [{
+            "rawSql": "SELECT ts, consumer, event_type, item_type, item_id, project, error FROM consumer.consumer_metrics ORDER BY ts DESC LIMIT 50",
+            "format": "table"
+          }]
+        }
+      ]
+    }

@@ -2,8 +2,10 @@ import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
 import { startHealthServer } from '../../shared/health.js';
+import { createMetrics } from '../../shared/metrics.js';
 
 const logger = createLogger('chromadb-consumer');
+const metrics = createMetrics('chromadb');
 
 class ChromaHTTPClient {
   constructor(baseUrl) {
@@ -79,6 +81,7 @@ class ChromaDBConsumer {
 
     await this.client.upsert(this.skillCollectionId, [skillId], [doc], [meta]);
     this.stats.skillChunks++;
+    metrics.track('indexed', { itemId: skillId, itemType: 'skill', project: skill.sourceCollection || '' });
 
     if (this.stats.skillChunks % 50 === 0) {
       logger.info(`Skills indexed: ${this.stats.skillChunks}`);
@@ -107,6 +110,7 @@ class ChromaDBConsumer {
 
     await this.client.upsert(this.sessionCollectionId, [sessionId], [doc], [meta]);
     this.stats.sessionChunks++;
+    metrics.track('indexed', { itemId: sessionId, itemType: 'session', project: session.project || 'unknown' });
 
     if (this.stats.sessionChunks % 20 === 0) {
       logger.info(`Sessions indexed: ${this.stats.sessionChunks}`);
