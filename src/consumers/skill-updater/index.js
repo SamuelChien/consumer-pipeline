@@ -1,11 +1,12 @@
-import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
-import { join, basename } from 'path';
+import { writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
 import { createMetrics } from '../../shared/metrics.js';
 import { startHealthServer } from '../../shared/health.js';
+import { StoreClients } from '../../shared/store-clients.js';
 
 const logger = createLogger('skill-updater-consumer');
 const metrics = createMetrics('skill-updater');
@@ -13,100 +14,131 @@ const metrics = createMetrics('skill-updater');
 class SkillUpdaterConsumer {
   constructor() {
     this.claude = new Anthropic();
+    this.stores = new StoreClients();
     this.outputDir = join(config.outputDir, 'generated-skills');
     this.sessionBuffer = [];
-    this.skillGaps = new Map();
-    this.stats = { scripts: 0, fundamental: 0, orchestration: 0 };
+    this.processedSkillIds = new Set();
+    this.stats = { generated: 0, skipped: 0 };
   }
 
-  init() {
+  async init() {
     mkdirSync(join(this.outputDir, 'scripts'), { recursive: true });
     mkdirSync(join(this.outputDir, 'fundamental'), { recursive: true });
     mkdirSync(join(this.outputDir, 'orchestration'), { recursive: true });
-    mkdirSync(join(this.outputDir, 'queue'), { recursive: true });
+    await this.stores.init();
+    logger.info('Store clients initialized');
   }
 
   async handleSessionAnalyzed({ key, value }) {
     const session = value;
     const analysis = session.analysis || {};
-    const sessionId = session.sessionId || key;
 
     this.sessionBuffer.push({
-      sessionId,
+      sessionId: session.sessionId || key,
       project: session.project,
       category: analysis.categories?.primary,
       topics: (analysis.topics || []).map(t => t.topic),
       tools: (analysis.toolUsage?.tools || []).map(t => t.name),
-      files: (analysis.filesAccessed || []).slice(0, 10).map(f => f.path),
       commands: (analysis.commands?.topBinaries || []).map(c => c.binary),
       complexity: analysis.complexity?.level,
+      tokenCount: analysis.tokenUsage?.totalTokens || 0,
     });
 
     if (this.sessionBuffer.length >= 10) {
-      await this.analyzeGapsAndGenerate();
+      await this.createSkillsFromContext();
       this.sessionBuffer = [];
     }
   }
 
   async handleSkillAnalyzed({ key, value }) {
-    const skill = value;
-    const analysis = skill.analysis || {};
-    const qualityScore = analysis.qualityScore?.score || 0;
-
-    if (qualityScore < 40) {
-      this.skillGaps.set(skill.id || key, {
-        skillId: skill.id || key,
-        name: skill.name,
-        category: analysis.categories?.primary,
-        qualityScore,
-        missingElements: this.identifyMissing(skill),
-      });
-    }
+    this.processedSkillIds.add(value.id || key);
   }
 
-  identifyMissing(skill) {
-    const missing = [];
-    if (!skill.description) missing.push('description');
-    if (!(skill.headings || []).length) missing.push('headings');
-    if (!(skill.codeBlocks || []).length) missing.push('code-examples');
-    if (!(skill.tags || []).length) missing.push('tags');
-    if ((skill.bodyLength || 0) < 500) missing.push('content-depth');
-    if (!(skill.allowedTools || []).length) missing.push('tool-permissions');
-    return missing;
-  }
+  async createSkillsFromContext() {
+    const gaps = await this.stores.getGapAnalysis();
 
-  async analyzeGapsAndGenerate() {
     const sessionSummary = this.sessionBuffer.map(s =>
-      `- ${s.project}: ${s.category} session using ${s.tools.join(', ')} on topics ${s.topics.join(', ')}`
+      `- ${s.project}: ${s.category} (${s.complexity}), tools: ${s.tools.join(', ')}, topics: ${s.topics.join(', ')}, tokens: ${s.tokenCount}`
     ).join('\n');
 
-    const existingGaps = [...this.skillGaps.values()].slice(0, 10);
-    const gapsSummary = existingGaps.map(g =>
-      `- ${g.name} (${g.category}): quality ${g.qualityScore}/100, missing: ${g.missingElements.join(', ')}`
+    const categoryBreakdown = (gaps.skillCategories || []).map(c =>
+      `- ${c.category}: ${c.cnt} skills, avg quality: ${Math.round(c.avg_quality || 0)}/100`
     ).join('\n');
+
+    const sessionDemand = (gaps.sessionTopics || []).map(t =>
+      `- ${t.primary_category}: ${t.sessions} sessions, ${t.tokens} tokens used`
+    ).join('\n');
+
+    const lowQuality = (gaps.lowQualitySkills || []).map(s =>
+      `- ${s.name} (${s.category}): quality ${s.quality_score}/100`
+    ).join('\n');
+
+    const orphanTopics = (gaps.orphanTopics || []).map(t => t.topic).join(', ');
+
+    const hubSkills = (gaps.hubSkills || []).map(s =>
+      `- ${s.id} (${s.category}): ${s.connections} connections`
+    ).join('\n');
+
+    const isolatedSkills = (gaps.isolatedSkills || []).slice(0, 10).map(s => s.id).join(', ');
+
+    const prompt = `You are a skill architect for Claude Code. Analyze the data below from our skill intelligence pipeline and create NEW skills that fill real gaps.
+
+## DATA FROM 4 STORES:
+
+### 1. USER SESSION DEMAND (from ClickHouse — what users actually do)
+${sessionDemand || 'No session data available'}
+
+### 2. RECENT SESSIONS (raw Kafka — current user workflows)
+${sessionSummary}
+
+### 3. EXISTING SKILL COVERAGE (from ClickHouse — what we have)
+${categoryBreakdown || 'No skill data available'}
+
+### 4. LOW QUALITY SKILLS NEEDING REPLACEMENT (from ClickHouse)
+${lowQuality || 'None found'}
+
+### 5. GRAPH ANALYSIS (from Neo4j)
+**Hub skills** (most connected — build on these):
+${hubSkills || 'No graph data'}
+
+**Isolated skills** (no connections — may need linking):
+${isolatedSkills || 'None'}
+
+**Orphan topics** (topics with no skills):
+${orphanTopics || 'None'}
+
+### 6. EXISTING SKILL COUNT: ${this.processedSkillIds.size}
+
+## INSTRUCTIONS:
+- Create skills that fill GAPS between what users DO (sessions) and what skills EXIST
+- If a category has high session demand but low skill count/quality, prioritize it
+- If orphan topics exist, create skills for them
+- Do NOT duplicate existing skills (${this.processedSkillIds.size} already exist)
+- Each skill must have: name, description, category, complete instructions body
+
+Return JSON:
+{
+  "analysis": "2-3 sentence gap analysis explaining what's missing",
+  "skills": [
+    {
+      "name": "skill-name",
+      "type": "script|fundamental|orchestration",
+      "description": "what this skill does",
+      "category": "the category",
+      "tags": ["tag1", "tag2"],
+      "tools": ["Read", "Bash", "Edit"],
+      "body": "Full SKILL.md content with ## sections, examples, and instructions"
+    }
+  ]
+}
+
+Generate 2-4 high-quality skills. Each body should be 500+ words with real, actionable instructions.`;
 
     try {
       const response = await this.claude.messages.create({
         model: config.claude.model,
-        max_tokens: 4096,
-        messages: [{
-          role: 'user',
-          content: `Analyze these recent Claude Code sessions and existing skill gaps to recommend new skills to create.
-
-## Recent Sessions
-${sessionSummary}
-
-## Low-Quality Skills Needing Improvement
-${gapsSummary}
-
-Respond with a JSON object containing:
-1. "scripts": Array of quick-use script skills (bash/CLI utilities). Each: {name, description, category, tools, body}
-2. "fundamental": Array of foundational skills for common patterns. Each: {name, description, category, prerequisites, body}
-3. "orchestration": Array of workflow orchestration skills that chain multiple skills. Each: {name, description, steps, triggers, body}
-
-Focus on gaps where users needed skills that don't exist or are low quality. Generate 1-2 per category max.
-Return valid JSON only.`,
-        }],
+        max_tokens: 8000,
+        messages: [{ role: 'user', content: prompt }],
       });
 
       const text = response.content[0]?.text || '';
@@ -116,88 +148,50 @@ Return valid JSON only.`,
         return;
       }
 
-      const recommendations = JSON.parse(jsonMatch[0]);
-      await this.writeGeneratedSkills(recommendations);
-    } catch (err) {
-      logger.error('Claude analysis failed', { error: err.message });
-    }
-  }
+      const result = JSON.parse(jsonMatch[0]);
+      logger.info('Gap analysis', { analysis: result.analysis });
 
-  async writeGeneratedSkills(recommendations) {
-    for (const script of (recommendations.scripts || [])) {
-      const id = this.toSlug(script.name);
-      const content = this.buildSkillMd(script, 'script');
-      writeFileSync(join(this.outputDir, 'scripts', `${id}.md`), content);
-      this.stats.scripts++;
-      logger.info(`Generated script skill: ${id}`);
-    }
+      for (const skill of (result.skills || [])) {
+        const id = (skill.name || 'unnamed').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-    for (const fundamental of (recommendations.fundamental || [])) {
-      const id = this.toSlug(fundamental.name);
-      const content = this.buildSkillMd(fundamental, 'fundamental');
-      writeFileSync(join(this.outputDir, 'fundamental', `${id}.md`), content);
-      this.stats.fundamental++;
-      logger.info(`Generated fundamental skill: ${id}`);
-    }
+        if (this.processedSkillIds.has(id)) {
+          this.stats.skipped++;
+          continue;
+        }
 
-    for (const orch of (recommendations.orchestration || [])) {
-      const id = this.toSlug(orch.name);
-      const content = this.buildSkillMd(orch, 'orchestration');
-      writeFileSync(join(this.outputDir, 'orchestration', `${id}.md`), content);
-      this.stats.orchestration++;
-      logger.info(`Generated orchestration skill: ${id}`);
-    }
-  }
+        const typeDir = skill.type === 'orchestration' ? 'orchestration' : skill.type === 'fundamental' ? 'fundamental' : 'scripts';
 
-  toSlug(name) {
-    return (name || 'unnamed')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
-  }
+        const content = [
+          '---',
+          `name: ${skill.name}`,
+          `description: ${skill.description || ''}`,
+          `category: ${skill.category || 'productivity'}`,
+          `tags: [${(skill.tags || []).join(', ')}]`,
+          `allowed-tools: [${(skill.tools || []).join(', ')}]`,
+          `tier: standard`,
+          `type: ${skill.type || 'script'}`,
+          `generated: true`,
+          `generated_at: ${new Date().toISOString()}`,
+          `generated_from: gap-analysis`,
+          '---',
+          '',
+          skill.body || `# ${skill.name}\n\n${skill.description}`,
+        ].join('\n');
 
-  buildSkillMd(skill, type) {
-    const lines = [];
-    lines.push('---');
-    lines.push(`name: ${skill.name}`);
-    lines.push(`description: ${skill.description || ''}`);
-    lines.push(`category: ${skill.category || type}`);
-    lines.push(`tier: standard`);
-    lines.push(`type: ${type}`);
-    lines.push(`generated: true`);
-    lines.push(`generated_at: ${new Date().toISOString()}`);
-    if (skill.tools) lines.push(`allowed-tools: [${skill.tools.join(', ')}]`);
-    if (skill.prerequisites) lines.push(`prerequisites: [${skill.prerequisites.join(', ')}]`);
-    if (skill.triggers) lines.push(`triggers: [${skill.triggers.join(', ')}]`);
-    lines.push('---');
-    lines.push('');
-    lines.push(`# ${skill.name}`);
-    lines.push('');
-    lines.push(skill.description || '');
-    lines.push('');
-
-    if (skill.steps) {
-      lines.push('## Workflow Steps');
-      lines.push('');
-      for (const step of skill.steps) {
-        lines.push(`1. ${step}`);
+        writeFileSync(join(this.outputDir, typeDir, `${id}.md`), content);
+        this.stats.generated++;
+        metrics.track('generated', { itemId: id, itemType: `skill-${skill.type}`, project: 'gap-analysis' });
+        logger.info(`Generated ${skill.type} skill: ${id}`);
       }
-      lines.push('');
+    } catch (err) {
+      logger.error('Skill generation failed', { error: err.message });
     }
-
-    if (skill.body) {
-      lines.push('## Instructions');
-      lines.push('');
-      lines.push(skill.body);
-    }
-
-    return lines.join('\n');
   }
 }
 
 async function main() {
   const consumer = new SkillUpdaterConsumer();
-  consumer.init();
+  await consumer.init();
 
   const kafka = new KafkaConsumerGroup('skill-updater-consumer-group', logger);
 
@@ -210,8 +204,9 @@ async function main() {
 
   process.on('SIGINT', async () => {
     if (consumer.sessionBuffer.length > 0) {
-      await consumer.analyzeGapsAndGenerate();
+      await consumer.createSkillsFromContext();
     }
+    await consumer.stores.close();
     logger.info('Shutting down', consumer.stats);
     await kafka.stop();
     process.exit(0);
