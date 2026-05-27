@@ -1,30 +1,20 @@
-const isGKE = process.env.KAFKA_ENV === 'gke' || process.env.KUBERNETES_SERVICE_HOST;
+const isGKE = process.env.KUBERNETES_SERVICE_HOST;
 
 export const config = {
-  kafka: {
-    brokers: (process.env.KAFKA_BROKERS || (isGKE
-      ? 'kafka-service:9092'
-      : 'localhost:9092'
-    )).split(','),
-    clientId: 'consumer-pipeline',
-    ssl: process.env.KAFKA_SSL === 'true',
-  },
-
   topics: {
-    sessionsRaw: process.env.TOPIC_SESSIONS_RAW || 'sessions.raw',
-    sessionsAnalyzed: process.env.TOPIC_SESSIONS_ANALYZED || 'sessions.analyzed',
-    sessionsTools: process.env.TOPIC_SESSIONS_TOOLS || 'sessions.tools',
-    sessionsFiles: process.env.TOPIC_SESSIONS_FILES || 'sessions.files',
-    skillsRaw: process.env.TOPIC_SKILLS_RAW || 'skills.raw',
-    skillsAnalyzed: process.env.TOPIC_SKILLS_ANALYZED || 'skills.analyzed',
-    skillsEntities: process.env.TOPIC_SKILLS_ENTITIES || 'skills.entities',
-    skillsDependencies: process.env.TOPIC_SKILLS_DEPENDENCIES || 'skills.dependencies',
+    skillsAnalyzed: process.env.TOPIC_SKILLS_ANALYZED || 'sink-skills-analyzed',
+    sessionsAnalyzed: process.env.TOPIC_SESSIONS_ANALYZED || 'sink-sessions-analyzed',
+    codeAnalyzed: process.env.TOPIC_CODE_ANALYZED || 'sink-code-analyzed',
+    skillsRaw: process.env.TOPIC_SKILLS_RAW || 'sink-skills',
+    sessionsRaw: process.env.TOPIC_SESSIONS_RAW || 'sink-sessions',
+    codeRaw: process.env.TOPIC_CODE_RAW || 'sink-code',
   },
 
   chromadb: {
     url: process.env.CHROMADB_URL || (isGKE ? 'http://chromadb-service:8000' : 'http://localhost:8100'),
     collectionSkillChunks: 'skill_chunks',
     collectionSessionChunks: 'session_chunks',
+    collectionCodeChunks: 'code_chunks',
   },
 
   clickhouse: {
@@ -47,10 +37,7 @@ export const config = {
   gcp: {
     projectId: process.env.PROJECT_ID || 'blobfish-ai-429200',
     region: process.env.REGION || 'us-central1',
-    zone: process.env.ZONE || 'us-central1-a',
-    clusterName: process.env.CLUSTER_NAME || 'email-intelligence-cluster',
   },
 
-  skillsDir: process.env.SKILLS_DIR || null,
   outputDir: process.env.OUTPUT_DIR || './output',
 };

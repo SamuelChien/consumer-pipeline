@@ -1,5 +1,5 @@
 import { createClient } from '@clickhouse/client';
-import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
+import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
 import { createMetrics } from '../../shared/metrics.js';
@@ -52,6 +52,18 @@ class ClickHouseConsumer {
 
     this.stats.skills++;
     metrics.track('inserted', { itemId: skill.id || key, itemType: 'skill', project: skill.sourceCollection || '' });
+
+    const entities = analysis.entities || {};
+    const entityRows = [
+      ...(entities.technologies || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'technology' })),
+      ...(entities.tools || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'tool' })),
+      ...(entities.platforms || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'platform' })),
+      ...(entities.concepts || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'concept' })),
+    ];
+    if (entityRows.length > 0) {
+      try { await this.client.insert({ table: 'skill_entities', values: entityRows, format: 'JSONEachRow' }); } catch {}
+    }
+
     logger.info(`Inserted skill ${skill.id || key}`, { total: this.stats.skills });
   }
 
@@ -100,14 +112,14 @@ class ClickHouseConsumer {
         secondary_category: analysis.categories?.secondary || null,
         complexity_level: analysis.complexity?.level || 'simple',
         message_count: session.messageCount || 0,
-        total_tokens: analysis.tokenUsage?.totalTokens || 0,
+        total_tokens: analysis.tokenUsage?.totalTokens || analysis.tokenUsage?.total || 0,
         input_tokens: analysis.tokenUsage?.totalInput || 0,
         output_tokens: analysis.tokenUsage?.totalOutput || 0,
         cache_hit_rate: analysis.tokenUsage?.cacheHitRate || 0,
         total_tool_calls: analysis.toolUsage?.totalToolCalls || 0,
         unique_tools: analysis.toolUsage?.uniqueTools || 0,
         files_accessed: (analysis.filesAccessed || []).length,
-        duration_minutes: analysis.duration?.minutes || 0,
+        duration_minutes: analysis.duration?.durationMinutes || analysis.duration?.minutes || 0,
         error_count: analysis.errors?.length || 0,
       }],
       format: 'JSONEachRow',
@@ -115,6 +127,19 @@ class ClickHouseConsumer {
 
     this.stats.sessions++;
     metrics.track('inserted', { itemId: session.sessionId || key, itemType: 'session', project: session.project || '' });
+
+    const tools = analysis.toolUsage?.tools || [];
+    if (tools.length > 0) {
+      const toolRows = tools.map(t => ({ session_id: session.sessionId || key, tool_name: t.name, call_count: t.count || 1 }));
+      try { await this.client.insert({ table: 'session_tools', values: toolRows, format: 'JSONEachRow' }); } catch {}
+    }
+
+    const files = analysis.toolUsage?.filesAccessed || [];
+    if (files.length > 0) {
+      const fileRows = files.slice(0, 50).map(f => ({ session_id: session.sessionId || key, file_path: f.path, reads: f.reads || 0, writes: f.writes || 0, edits: f.edits || 0 }));
+      try { await this.client.insert({ table: 'session_files', values: fileRows, format: 'JSONEachRow' }); } catch {}
+    }
+
     logger.info(`Inserted session ${session.sessionId || key}`, { total: this.stats.sessions });
   }
 
@@ -155,15 +180,11 @@ class ClickHouseConsumer {
 
 async function main() {
   const consumer = new ClickHouseConsumer();
-  const kafka = new KafkaConsumerGroup('clickhouse-consumer-group', logger);
+  const kafka = new PubSubConsumerGroup('clickhouse-consumer-group', logger);
 
   kafka
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
-    .on(config.topics.skillsEntities, (msg) => consumer.handleSkillEntities(msg))
-    .on(config.topics.skillsDependencies, (msg) => consumer.handleSkillDependencies(msg))
-    .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg))
-    .on(config.topics.sessionsTools, (msg) => consumer.handleSessionTools(msg))
-    .on(config.topics.sessionsFiles, (msg) => consumer.handleSessionFiles(msg));
+    .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
   await kafka.start();
 

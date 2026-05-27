@@ -1,4 +1,4 @@
-import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
+import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
 import { startHealthServer } from '../../shared/health.js';
@@ -122,7 +122,7 @@ async function main() {
   const consumer = new ChromaDBConsumer();
   await consumer.init();
 
-  const kafka = new KafkaConsumerGroup('chromadb-consumer-group', logger);
+  const kafka = new PubSubConsumerGroup('chromadb-consumer-group', logger);
 
   kafka
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))

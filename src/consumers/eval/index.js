@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import Anthropic from '@anthropic-ai/sdk';
-import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
+import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
 import { createMetrics } from '../../shared/metrics.js';
@@ -198,7 +198,7 @@ async function main() {
   const consumer = new EvalConsumer();
   await consumer.init();
 
-  const kafka = new KafkaConsumerGroup('eval-consumer-group', logger);
+  const kafka = new PubSubConsumerGroup('eval-consumer-group', logger);
 
   kafka
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))

@@ -4,18 +4,15 @@ metadata:
   name: consumer-pipeline-config
   namespace: consumer-pipeline
 data:
-  KAFKA_ENV: "gke"
-  KAFKA_BROKERS: "kafka.kafka.svc.cluster.local:29092"
-  KAFKA_SSL: "false"
+  PROJECT_ID: "blobfish-ai-429200"
+  REGION: "us-central1"
 
-  TOPIC_SESSIONS_RAW: "sessions.raw"
-  TOPIC_SESSIONS_ANALYZED: "sessions.analyzed"
-  TOPIC_SESSIONS_TOOLS: "sessions.tools"
-  TOPIC_SESSIONS_FILES: "sessions.files"
-  TOPIC_SKILLS_RAW: "skills.raw"
-  TOPIC_SKILLS_ANALYZED: "skills.analyzed"
-  TOPIC_SKILLS_ENTITIES: "skills.entities"
-  TOPIC_SKILLS_DEPENDENCIES: "skills.dependencies"
+  TOPIC_SKILLS_ANALYZED: "sink-skills-analyzed"
+  TOPIC_SESSIONS_ANALYZED: "sink-sessions-analyzed"
+  TOPIC_CODE_ANALYZED: "sink-code-analyzed"
+  TOPIC_SKILLS_RAW: "sink-skills"
+  TOPIC_SESSIONS_RAW: "sink-sessions"
+  TOPIC_CODE_RAW: "sink-code"
 
   CHROMADB_URL: "http://chromadb-service.consumer-pipeline.svc.cluster.local:8000"
   CLICKHOUSE_URL: "http://clickhouse-service.consumer-pipeline.svc.cluster.local:8123"
@@ -26,8 +23,3 @@ data:
 
   CLAUDE_MODEL: "claude-sonnet-4-20250514"
   OUTPUT_DIR: "/data/output"
-
-  PROJECT_ID: "blobfish-ai-429200"
-  REGION: "us-central1"
-  ZONE: "us-central1-a"
-  CLUSTER_NAME: "email-intelligence-cluster"

@@ -1,6 +1,6 @@
 import neo4j from 'neo4j-driver';
 import { BM25 } from './bm25.js';
-import { KafkaConsumerGroup } from '../../shared/kafka-consumer.js';
+import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
 import { createMetrics } from '../../shared/metrics.js';
@@ -279,7 +279,7 @@ async function main() {
   const consumer = new GraphConsumer();
   await consumer.init();
 
-  const kafka = new KafkaConsumerGroup('graph-consumer-group', logger);
+  const kafka = new PubSubConsumerGroup('graph-consumer-group', logger);
 
   kafka
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
