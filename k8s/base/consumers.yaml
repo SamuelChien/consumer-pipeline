@@ -44,11 +44,11 @@ spec:
             periodSeconds: 10
           resources:
             requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
               memory: "512Mi"
               cpu: "200m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -95,11 +95,11 @@ spec:
             periodSeconds: 10
           resources:
             requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
               memory: "512Mi"
               cpu: "200m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -143,15 +143,14 @@ spec:
               mountPath: /data/output
           resources:
             requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
               memory: "512Mi"
               cpu: "200m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
       volumes:
         - name: output
-          persistentVolumeClaim:
-            claimName: consumer-output-pvc
+          emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -198,8 +197,8 @@ spec:
             periodSeconds: 10
           resources:
             requests:
-              memory: "512Mi"
-              cpu: "200m"
+              memory: "256Mi"
+              cpu: "50m"
             limits:
               memory: "1Gi"
               cpu: "1000m"
@@ -246,15 +245,14 @@ spec:
               mountPath: /data/output
           resources:
             requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
               memory: "512Mi"
               cpu: "200m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
       volumes:
         - name: output
-          persistentVolumeClaim:
-            claimName: consumer-output-pvc
+          emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -298,12 +296,11 @@ spec:
               mountPath: /data/output
           resources:
             requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
               memory: "512Mi"
               cpu: "200m"
-            limits:
-              memory: "1Gi"
-              cpu: "500m"
       volumes:
         - name: output
-          persistentVolumeClaim:
-            claimName: consumer-output-pvc
+          emptyDir: {}
