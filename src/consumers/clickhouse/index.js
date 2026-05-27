@@ -26,7 +26,7 @@ class ClickHouseConsumer {
     await this.client.insert({
       table: 'skills',
       values: [{
-        id: skill.id || key,
+        id: skill.sourceId || skill.id || key,
         name: skill.name || '',
         description: (skill.description || '').slice(0, 2000),
         category: analysis.categories?.primary || skill.category || 'uncategorized',
@@ -51,20 +51,20 @@ class ClickHouseConsumer {
     });
 
     this.stats.skills++;
-    metrics.track('inserted', { itemId: skill.id || key, itemType: 'skill', project: skill.sourceCollection || '' });
+    metrics.track('inserted', { itemId: skill.sourceId || skill.id || key, itemType: 'skill', project: skill.sourceCollection || '' });
 
     const entities = analysis.entities || {};
     const entityRows = [
-      ...(entities.technologies || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'technology' })),
-      ...(entities.tools || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'tool' })),
-      ...(entities.platforms || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'platform' })),
-      ...(entities.concepts || []).map(t => ({ skill_id: skill.id || key, entity_name: t, entity_type: 'concept' })),
+      ...(Array.isArray(entities.technologies) ? entities.technologies : []).map(t => ({ skill_id: skill.sourceId || skill.id || key, entity_name: t, entity_type: 'technology' })),
+      ...(Array.isArray(entities.tools) ? entities.tools : []).map(t => ({ skill_id: skill.sourceId || skill.id || key, entity_name: t, entity_type: 'tool' })),
+      ...(Array.isArray(entities.platforms) ? entities.platforms : []).map(t => ({ skill_id: skill.sourceId || skill.id || key, entity_name: t, entity_type: 'platform' })),
+      ...(Array.isArray(entities.concepts) ? entities.concepts : []).map(t => ({ skill_id: skill.sourceId || skill.id || key, entity_name: t, entity_type: 'concept' })),
     ];
     if (entityRows.length > 0) {
       try { await this.client.insert({ table: 'skill_entities', values: entityRows, format: 'JSONEachRow' }); } catch {}
     }
 
-    logger.info(`Inserted skill ${skill.id || key}`, { total: this.stats.skills });
+    logger.info(`Inserted skill ${skill.sourceId || skill.id || key}`, { total: this.stats.skills });
   }
 
   async handleSkillEntities({ key, value }) {
@@ -106,7 +106,7 @@ class ClickHouseConsumer {
     await this.client.insert({
       table: 'sessions',
       values: [{
-        session_id: session.sessionId || key,
+        session_id: session.sessionId || session.sourceId || key,
         project: session.project || 'unknown',
         primary_category: analysis.categories?.primary || 'unknown',
         secondary_category: analysis.categories?.secondary || null,
@@ -126,21 +126,21 @@ class ClickHouseConsumer {
     });
 
     this.stats.sessions++;
-    metrics.track('inserted', { itemId: session.sessionId || key, itemType: 'session', project: session.project || '' });
+    metrics.track('inserted', { itemId: session.sessionId || session.sourceId || key, itemType: 'session', project: session.project || '' });
 
     const tools = analysis.toolUsage?.tools || [];
     if (tools.length > 0) {
-      const toolRows = tools.map(t => ({ session_id: session.sessionId || key, tool_name: t.name, call_count: t.count || 1 }));
+      const toolRows = tools.map(t => ({ session_id: session.sessionId || session.sourceId || key, tool_name: t.name, call_count: t.count || 1 }));
       try { await this.client.insert({ table: 'session_tools', values: toolRows, format: 'JSONEachRow' }); } catch {}
     }
 
     const files = analysis.toolUsage?.filesAccessed || [];
     if (files.length > 0) {
-      const fileRows = files.slice(0, 50).map(f => ({ session_id: session.sessionId || key, file_path: f.path, reads: f.reads || 0, writes: f.writes || 0, edits: f.edits || 0 }));
+      const fileRows = files.slice(0, 50).map(f => ({ session_id: session.sessionId || session.sourceId || key, file_path: f.path, reads: f.reads || 0, writes: f.writes || 0, edits: f.edits || 0 }));
       try { await this.client.insert({ table: 'session_files', values: fileRows, format: 'JSONEachRow' }); } catch {}
     }
 
-    logger.info(`Inserted session ${session.sessionId || key}`, { total: this.stats.sessions });
+    logger.info(`Inserted session ${session.sessionId || session.sourceId || key}`, { total: this.stats.sessions });
   }
 
   async handleSessionTools({ key, value }) {

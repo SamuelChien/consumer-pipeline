@@ -37,7 +37,7 @@ class GraphConsumer {
 
   async handleSkillAnalyzed({ key, value }) {
     const skill = value;
-    const skillId = skill.id || key;
+    const skillId = skill.sourceId || skill.id || key;
     const analysis = skill.analysis || {};
     const session = this.driver.session();
 
@@ -106,7 +106,7 @@ class GraphConsumer {
       this.bm25.addDocument(skillId, [
         skill.name || '',
         skill.description || '',
-        (skill.tags || []).join(' '),
+        (Array.isArray(skill.tags) ? skill.tags : []).join(' '),
         (keywords.map(k => k.word || k)).join(' '),
       ].join(' '));
 

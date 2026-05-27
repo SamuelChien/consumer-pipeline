@@ -33,7 +33,7 @@ class EvalConsumer {
     const analysis = session.analysis || {};
 
     this.sessionBuffer.push({
-      sessionId: session.sessionId || key,
+      sessionId: session.sessionId || session.sourceId || key,
       project: session.project,
       category: analysis.categories?.primary,
       topics: (analysis.topics || []).map(t => t.topic),
@@ -49,7 +49,7 @@ class EvalConsumer {
 
   async handleSkillAnalyzed({ key, value }) {
     const skill = value;
-    const skillId = skill.id || key;
+    const skillId = skill.sourceId || skill.id || key;
     const analysis = skill.analysis || {};
 
     this.skillIndex.set(skillId, {
@@ -88,7 +88,7 @@ class EvalConsumer {
 - ID: ${skillId}
 - Category: ${analysis.categories?.primary || 'unknown'}
 - Description: ${(skill.description || '').slice(0, 500)}
-- Tags: ${(skill.tags || []).join(', ')}
+- Tags: ${(Array.isArray(skill.tags) ? skill.tags : []).join(', ')}
 - Tools: ${(Array.isArray(skill.allowedTools) ? skill.allowedTools : []).join(', ')}
 - Platforms: ${(skill.platforms || []).join(', ')}
 ${relatedContext}

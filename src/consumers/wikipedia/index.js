@@ -44,7 +44,7 @@ class WikipediaConsumer {
 
   async handleSkillAnalyzed({ key, value }) {
     const skill = value;
-    const skillId = skill.id || key;
+    const skillId = skill.sourceId || skill.id || key;
     const analysis = skill.analysis || {};
 
     const article = this.buildSkillArticle(skill, analysis);
@@ -140,7 +140,7 @@ class WikipediaConsumer {
 
   async handleSessionAnalyzed({ key, value }) {
     const session = value;
-    const sessionId = session.sessionId || key;
+    const sessionId = session.sessionId || session.sourceId || key;
     const analysis = session.analysis || {};
 
     const article = this.buildSessionArticle(session, analysis);

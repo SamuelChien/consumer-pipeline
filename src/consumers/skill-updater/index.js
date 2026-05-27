@@ -34,7 +34,7 @@ class SkillUpdaterConsumer {
     const analysis = session.analysis || {};
 
     this.sessionBuffer.push({
-      sessionId: session.sessionId || key,
+      sessionId: session.sessionId || session.sourceId || key,
       project: session.project,
       category: analysis.categories?.primary,
       topics: (analysis.topics || []).map(t => t.topic),
@@ -166,7 +166,7 @@ Generate 2-4 high-quality skills. Each body should be 500+ words with real, acti
           `name: ${skill.name}`,
           `description: ${skill.description || ''}`,
           `category: ${skill.category || 'productivity'}`,
-          `tags: [${(skill.tags || []).join(', ')}]`,
+          `tags: [${(Array.isArray(skill.tags) ? skill.tags : []).join(', ')}]`,
           `allowed-tools: [${(skill.tools || []).join(', ')}]`,
           `tier: standard`,
           `type: ${skill.type || 'script'}`,

@@ -67,7 +67,7 @@ class ChromaDBConsumer {
 
   async handleSkillAnalyzed({ key, value }) {
     const skill = value;
-    const skillId = skill.id || key;
+    const skillId = skill.sourceId || skill.id || key;
     const doc = (skill.description || '') + '\n' + (skill.body || '').slice(0, 3000);
     if (!doc.trim()) return;
 
@@ -76,7 +76,7 @@ class ChromaDBConsumer {
       name: skill.name || skillId,
       category: skill.analysis?.categories?.primary || skill.category || 'uncategorized',
       tier: skill.tier || 'standard',
-      tags: (skill.tags || []).slice(0, 5).join(','),
+      tags: (Array.isArray(skill.tags) ? skill.tags : []).slice(0, 5).join(','),
     };
 
     await this.client.upsert(this.skillCollectionId, [skillId], [doc], [meta]);
@@ -90,7 +90,7 @@ class ChromaDBConsumer {
 
   async handleSessionAnalyzed({ key, value }) {
     const session = value;
-    const sessionId = session.sessionId || key;
+    const sessionId = session.sessionId || session.sourceId || key;
     const analysis = session.analysis || {};
 
     const doc = [
