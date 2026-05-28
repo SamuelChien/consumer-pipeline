@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import Anthropic from '@anthropic-ai/sdk';
+import { claudeJSON } from '../../shared/claude-cli.js';
 import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
@@ -13,7 +13,6 @@ const metrics = createMetrics('skill-updater');
 
 class SkillUpdaterConsumer {
   constructor() {
-    this.claude = new Anthropic();
     this.stores = new StoreClients();
     this.outputDir = join(config.outputDir, 'generated-skills');
     this.sessionBuffer = [];
@@ -88,7 +87,7 @@ class SkillUpdaterConsumer {
 ### 1. USER SESSION DEMAND (from ClickHouse — what users actually do)
 ${sessionDemand || 'No session data available'}
 
-### 2. RECENT SESSIONS (raw Kafka — current user workflows)
+### 2. RECENT SESSIONS (current user workflows)
 ${sessionSummary}
 
 ### 3. EXISTING SKILL COVERAGE (from ClickHouse — what we have)
@@ -135,20 +134,7 @@ Return JSON:
 Generate 2-4 high-quality skills. Each body should be 500+ words with real, actionable instructions.`;
 
     try {
-      const response = await this.claude.messages.create({
-        model: config.claude.model,
-        max_tokens: 8000,
-        messages: [{ role: 'user', content: prompt }],
-      });
-
-      const text = response.content[0]?.text || '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        logger.warn('No valid JSON in Claude response');
-        return;
-      }
-
-      const result = JSON.parse(jsonMatch[0]);
+      const result = await claudeJSON(prompt);
       logger.info('Gap analysis', { analysis: result.analysis });
 
       for (const skill of (result.skills || [])) {
@@ -193,13 +179,13 @@ async function main() {
   const consumer = new SkillUpdaterConsumer();
   await consumer.init();
 
-  const kafka = new PubSubConsumerGroup('skill-updater-consumer-group', logger);
+  const pubsub = new PubSubConsumerGroup('skill-updater-consumer-group', logger);
 
-  kafka
+  pubsub
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg))
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg));
 
-  await kafka.start();
+  await pubsub.start();
   startHealthServer(3005);
 
   process.on('SIGINT', async () => {
@@ -208,7 +194,7 @@ async function main() {
     }
     await consumer.stores.close();
     logger.info('Shutting down', consumer.stats);
-    await kafka.stop();
+    await pubsub.stop();
     process.exit(0);
   });
 }

@@ -1,0 +1,76 @@
+{
+  "id": "samuel-dev",
+  "name": "Samuel's Dev Pipeline",
+  "enabled": true,
+  "schedule": "hourly",
+
+  "sources": [
+    {
+      "type": "claude-sessions",
+      "path": "~/.claude",
+      "since": "7d",
+      "deepAnalysisFile": "/Users/samuelchien/dev/claude-sessions-pipeline/output/deep-analysis.json"
+    },
+    {
+      "type": "skills",
+      "path": "/Users/samuelchien/dev/mega-skills-directory/mega-skills-union",
+      "limit": 0
+    },
+    {
+      "type": "codebase",
+      "repos": [
+        "/Users/samuelchien/dev/nario",
+        "/Users/samuelchien/dev/consumer-pipeline",
+        "/Users/samuelchien/dev/claude-sink"
+      ]
+    }
+  ],
+
+  "processors": [
+    {
+      "type": "gap-detection",
+      "config": {
+        "minSessionsForGap": 1,
+        "themes": ["mcp-integrations", "claude-code-config", "data-pipelines", "devops-infra", "architecture", "testing-quality"]
+      }
+    },
+    {
+      "type": "skill-generation",
+      "config": {
+        "batchSize": 3,
+        "maxGapsPerRun": 12,
+        "bodyMaxWords": 150
+      }
+    },
+    {
+      "type": "eval",
+      "config": {
+        "promoteThreshold": 70,
+        "reviseRange": [50, 69],
+        "maxRevisions": 10
+      }
+    }
+  ],
+
+  "outputs": {
+    "skills": {
+      "target": "nario-dev-skills",
+      "narioDir": "/Users/samuelchien/dev/nario",
+      "devSkillsPath": ".claude/dev-skills",
+      "symlinksPath": ".claude/skills",
+      "evalGate": 70
+    },
+    "graph": {
+      "target": "file",
+      "path": "output/skill-graph.json"
+    },
+    "wiki": {
+      "target": "file",
+      "path": "output/wiki"
+    },
+    "context": {
+      "target": "file",
+      "path": "output/pipeline-context.json"
+    }
+  }
+}

@@ -122,13 +122,13 @@ async function main() {
   const consumer = new ChromaDBConsumer();
   await consumer.init();
 
-  const kafka = new PubSubConsumerGroup('chromadb-consumer-group', logger);
+  const pubsub = new PubSubConsumerGroup('chromadb-consumer-group', logger);
 
-  kafka
+  pubsub
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
-  await kafka.start();
+  await pubsub.start();
 
   startHealthServer(3001, {
     chromadb: () => consumer.client.heartbeat(),
@@ -136,7 +136,7 @@ async function main() {
 
   process.on('SIGINT', async () => {
     logger.info('Shutting down', consumer.stats);
-    await kafka.stop();
+    await pubsub.stop();
     process.exit(0);
   });
 }

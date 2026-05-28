@@ -30,11 +30,10 @@ spec:
         - name: loader
           image: us-central1-docker.pkg.dev/blobfish-ai-429200/consumer-pipeline/consumer-pipeline:latest
           command: ["node", "scripts/load-data.js"]
+          envFrom:
+            - configMapRef:
+                name: consumer-pipeline-config
           env:
-            - name: KAFKA_BROKERS
-              value: "kafka.kafka.svc.cluster.local:29092"
-            - name: KAFKAJS_NO_PARTITIONER_WARNING
-              value: "1"
             - name: SKILLS_FILE
               value: "/data/skills.jsonl"
             - name: SESSIONS_FILE

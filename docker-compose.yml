@@ -1,7 +1,6 @@
 version: '3.8'
 
-# Data stores only — Kafka is on GKE (email-intelligence-cluster)
-# For local dev, use docker-compose.local.yml override to add a local Kafka
+# Data stores — consumers read from Google Pub/Sub
 
 services:
   chromadb:
@@ -38,17 +37,8 @@ services:
       - neo4j-data:/data
       - neo4j-logs:/logs
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
-
 volumes:
   chromadb-data:
   clickhouse-data:
   neo4j-data:
   neo4j-logs:
-  redis-data:

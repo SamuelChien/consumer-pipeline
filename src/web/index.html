@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skill Flywheel</title>
+<style>
+  :root { --bg:#0f1117; --panel:#171a23; --line:#262b38; --fg:#e6e9ef; --mut:#8b93a7; --acc:#6ea8fe; --ok:#46c08a; --warn:#e0a458; --bad:#e06c75; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:12px; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--mut); font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:20px 24px 60px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:18px; }
+  .panel h2 { font-size:14px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.04em; color:var(--mut); }
+  .banner { background:#2a2113; border:1px solid var(--warn); color:#f0c987; border-radius:8px; padding:10px 14px; margin-bottom:18px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .card .id { font-weight:600; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:middle; }
+  .on { background:var(--ok); } .off { background:#444b5c; }
+  .pill { font-size:11px; color:var(--mut); border:1px solid var(--line); border-radius:99px; padding:1px 8px; }
+  .pill.mut { color:var(--bad); border-color:#4a2b30; }
+  button { background:#222838; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 11px; cursor:pointer; font-size:13px; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); color:#0b1220; border-color:var(--acc); font-weight:600; }
+  button.danger:hover { border-color:var(--bad); color:var(--bad); }
+  input, select, textarea { background:#0d1018; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 9px; font:inherit; }
+  textarea { width:100%; min-height:54px; font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .mut { color:var(--mut); }
+  .skill { border-left:2px solid var(--line); padding:4px 0 4px 12px; margin:4px 0; }
+  .skill a { color:var(--acc); text-decoration:none; cursor:pointer; }
+  .skill a:hover { text-decoration:underline; }
+  pre { background:#0b0e15; border:1px solid var(--line); border-radius:8px; padding:14px; overflow:auto; white-space:pre-wrap; font:12px/1.55 ui-monospace,Menlo,monospace; max-height:60vh; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:780px){ .grid2 { grid-template-columns:1fr; } }
+  label { font-size:12px; color:var(--mut); display:block; margin:6px 0 2px; }
+  .muted-small { font-size:12px; color:var(--mut); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Skill Flywheel</h1>
+  <span class="sub">sessions · code · skills → multiturn Opus research → new skills</span>
+</header>
+<main>
+  <div id="banner"></div>
+
+  <div class="grid2">
+    <section class="panel">
+      <h2>Connectors (sinks)</h2>
+      <div id="connectors" class="muted-small">loading…</div>
+      <details style="margin-top:12px">
+        <summary class="mut" style="cursor:pointer">+ add connector</summary>
+        <div style="margin-top:10px">
+          <label>type</label>
+          <select id="c-type"></select>
+          <div id="c-type-desc" class="muted-small"></div>
+          <div class="row" style="margin-top:6px">
+            <div><label>producer kind</label>
+              <select id="c-kind"><option>user</option><option>team</option><option>tenant</option></select></div>
+            <div style="flex:1"><label>producer id</label><input id="c-id" placeholder="samuel" style="width:100%"/></div>
+          </div>
+          <label>config (JSON)</label>
+          <textarea id="c-config">{}</textarea>
+          <div class="row" style="margin-top:8px"><button class="primary" onclick="addConnector()">Add</button>
+            <span id="c-msg" class="muted-small"></span></div>
+        </div>
+      </details>
+    </section>
+
+    <section class="panel">
+      <h2>Run</h2>
+      <div class="row">
+        <label style="margin:0">sessions</label>
+        <input id="r-limit" type="number" value="1" min="1" style="width:64px"/>
+        <button class="primary" onclick="runResearch(false)">Run research</button>
+        <button onclick="runResearch(true)">Dry-run</button>
+      </div>
+      <div class="muted-small" style="margin-top:6px">Live runs spawn claude-opus-4-8 multi-turn (~$1–3/session).</div>
+      <div id="runs" style="margin-top:12px"></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Generated skills</h2>
+    <div id="skills" class="muted-small">loading…</div>
+  </section>
+
+  <section class="panel" id="viewer-panel" style="display:none">
+    <h2>SKILL.md <span id="viewer-title" class="mut"></span></h2>
+    <pre id="viewer"></pre>
+  </section>
+</main>
+
+<script>
+const api = (p, opts) => fetch(p, opts).then(r => r.json());
+
+async function loadConnectors() {
+  const data = await api('/api/connectors');
+  // banner
+  document.getElementById('banner').innerHTML = data.anyEnabled ? ''
+    : '<div class="banner">⚠ No connector is sinking. Enable a sink below (local sessions, a GitHub repo, or a skills folder) to feed the pipeline.</div>';
+  // catalog -> type select
+  const sel = document.getElementById('c-type');
+  if (!sel.dataset.filled) {
+    sel.innerHTML = data.catalog.map(t => `<option value="${t.type}">${t.label}</option>`).join('');
+    sel.dataset.filled = '1';
+    sel.onchange = () => {
+      const t = data.catalog.find(x => x.type === sel.value);
+      document.getElementById('c-type-desc').textContent = t.description;
+      document.getElementById('c-config').value = JSON.stringify(t.defaultConfig, null, 2);
+    };
+    sel.onchange();
+  }
+  // list
+  const el = document.getElementById('connectors');
+  if (!data.connectors.length) { el.innerHTML = '<span class="mut">none yet — add one →</span>'; return; }
+  el.innerHTML = data.connectors.map(c => `
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><span class="dot ${c.enabled?'on':'off'}"></span><span class="id">${c.id}</span></div>
+        <div class="row">
+          <button onclick="toggleConnector('${c.id}', ${!c.enabled})">${c.enabled?'disable':'enable'}</button>
+          <button onclick="syncConnector('${c.id}')">plan sink</button>
+          <button class="danger" onclick="delConnector('${c.id}')">✕</button>
+        </div>
+      </div>
+      <div class="muted-small">producer ${c.producer.kind}:${c.producer.id} · status ${c.status}${c.lastSync?' · synced '+c.lastSync:''}</div>
+      <div class="muted-small" style="font-family:ui-monospace">${JSON.stringify(c.config)}</div>
+      <pre id="plan-${c.id}" style="display:none;margin-top:8px"></pre>
+    </div>`).join('');
+}
+
+async function addConnector() {
+  let config;
+  try { config = JSON.parse(document.getElementById('c-config').value || '{}'); }
+  catch { document.getElementById('c-msg').textContent = 'config is not valid JSON'; return; }
+  const body = { type: document.getElementById('c-type').value, producerKind: document.getElementById('c-kind').value, producerId: document.getElementById('c-id').value, config };
+  const r = await api('/api/connectors', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  document.getElementById('c-msg').textContent = r.ok ? '✓ added (disabled)' : '✗ ' + (r.errors||[]).join('; ');
+  if (r.ok) loadConnectors();
+}
+async function toggleConnector(id, enable) { await api('/api/connectors/'+encodeURIComponent(id)+'/'+(enable?'enable':'disable'), {method:'POST'}); loadConnectors(); }
+async function delConnector(id) { if(!confirm('Remove '+id+'?'))return; await fetch('/api/connectors/'+encodeURIComponent(id), {method:'DELETE'}); loadConnectors(); }
+async function syncConnector(id) {
+  const r = await api('/api/connectors/'+encodeURIComponent(id)+'/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({plan:true})});
+  const pre = document.getElementById('plan-'+id);
+  pre.style.display='block';
+  pre.textContent = (r[0] && r[0].plan ? r[0].plan.join('\n') : JSON.stringify(r,null,2));
+}
+
+async function runResearch(dryRun) {
+  const limit = Number(document.getElementById('r-limit').value || 1);
+  if (!dryRun && !confirm('Run '+limit+' session(s) through claude-opus-4-8 multi-turn? This costs ~$'+(limit*2)+'.')) return;
+  await api('/api/research', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({limit, dryRun}) });
+  pollRuns();
+}
+async function pollRuns() {
+  const runs = await api('/api/research/runs');
+  document.getElementById('runs').innerHTML = runs.slice().reverse().map(r => `
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <span class="id">${r.id} ${r.dryRun?'<span class="pill">dry</span>':''}</span>
+        <span class="pill" style="${r.status==='done'?'color:var(--ok)':r.status==='error'?'color:var(--bad)':'color:var(--warn)'}">${r.status}</span>
+      </div>
+      <div class="muted-small">${r.sessions} session(s) · ${r.skills} skills · $${(r.cost||0).toFixed(2)}${r.error?' · '+r.error:''}</div>
+    </div>`).join('') || '<span class="mut">no runs yet</span>';
+  if (runs.some(r => r.status === 'running')) setTimeout(pollRuns, 3000);
+  else loadSkills();
+}
+
+async function loadSkills() {
+  const sessions = await api('/api/skills');
+  const el = document.getElementById('skills');
+  if (!sessions.length) { el.innerHTML = '<span class="mut">none yet — run research above</span>'; return; }
+  el.innerHTML = sessions.map(s => `
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <span class="id">${s.skills.length} skills</span>
+        <span class="muted-small">${s.turns||'?'} turns · $${(s.cost||0).toFixed(2)} · ${(s.generatedAt||'').slice(0,16).replace('T',' ')}</span>
+      </div>
+      <div class="muted-small" style="margin:4px 0">${(s.goal||'').slice(0,140)}</div>
+      ${s.skills.map(k => `<div class="skill">
+        <a onclick="viewSkill('${s.sessionId}','${k.skill_id}')">${k.skill_id}</a>
+        <span class="muted-small"> — ${k.addresses_gap||''}</span>
+        <span class="row" style="margin-top:3px">
+          <button onclick="evalDry('${s.sessionId}','${k.skill_id}')">eval (dry)</button>
+          <button onclick="install('${s.sessionId}','${k.skill_id}')">install</button>
+          <span id="r-${s.sessionId}-${k.skill_id}" class="muted-small"></span>
+        </span>
+        <pre id="rp-${s.sessionId}-${k.skill_id}" style="display:none;margin-top:6px"></pre>
+      </div>`).join('')}
+    </div>`).join('');
+}
+async function evalDry(sid, skid) {
+  const r = await api('/api/eval', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sessionId:sid, skillId:skid, dryRun:true}) });
+  const cmds = (r.results && r.results[0] && r.results[0].commands) || [];
+  const pre = document.getElementById('rp-'+sid+'-'+skid);
+  pre.style.display='block';
+  pre.textContent = '# skill-bench: candidate WITH vs baseline WITHOUT\n' + (cmds.join('\n') || JSON.stringify(r,null,2));
+}
+async function install(sid, skid) {
+  const plan = await api('/api/promote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sessionId:sid, skillId:skid, install:false}) });
+  const p = plan.results && plan.results[0] && plan.results[0].plan;
+  if (!confirm('Install '+skid+' to:\n'+(p?p.to:'?')+'\n\n(set SKILLS_TARGET_DIR to change target, e.g. ~/.claude/skills)')) return;
+  const r = await api('/api/promote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sessionId:sid, skillId:skid, install:true, overwrite:true}) });
+  const res = r.results && r.results[0];
+  document.getElementById('r-'+sid+'-'+skid).textContent = res && res.installed ? ('✓ '+res.installed) : ('✗ '+((res&&res.error)||'failed'));
+}
+async function viewSkill(sid, skid) {
+  const r = await api('/api/skills/'+encodeURIComponent(sid)+'/'+encodeURIComponent(skid));
+  document.getElementById('viewer-panel').style.display='block';
+  document.getElementById('viewer-title').textContent = skid;
+  document.getElementById('viewer').textContent = r.content || ('(not found) '+JSON.stringify(r));
+  document.getElementById('viewer-panel').scrollIntoView({behavior:'smooth'});
+}
+
+loadConnectors(); pollRuns();
+</script>
+</body>
+</html>

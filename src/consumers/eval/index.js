@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import Anthropic from '@anthropic-ai/sdk';
+import { claudeJSON } from '../../shared/claude-cli.js';
 import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
@@ -13,7 +13,6 @@ const metrics = createMetrics('eval');
 
 class EvalConsumer {
   constructor() {
-    this.claude = new Anthropic();
     this.stores = new StoreClients();
     this.outputDir = join(config.outputDir, 'evals');
     this.sessionBuffer = [];
@@ -77,12 +76,7 @@ class EvalConsumer {
       : '';
 
     try {
-      const response = await this.claude.messages.create({
-        model: config.claude.model,
-        max_tokens: 3000,
-        messages: [{
-          role: 'user',
-          content: `Generate test cases for this Claude Code skill.
+      const testData = await claudeJSON(`Generate test cases for this Claude Code skill.
 
 ## Skill: ${skill.name}
 - ID: ${skillId}
@@ -103,15 +97,7 @@ Generate JSON:
   "antiPatterns": ["message that should NOT trigger this"]
 }
 
-Generate 3-5 test cases. Return valid JSON only.`,
-        }],
-      });
-
-      const text = response.content[0]?.text || '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return;
-
-      const testData = JSON.parse(jsonMatch[0]);
+Generate 3-5 test cases.`);
 
       writeFileSync(
         join(this.outputDir, 'test-cases', `${skillId}.json`),
@@ -146,12 +132,7 @@ Generate 3-5 test cases. Return valid JSON only.`,
       .join('\n');
 
     try {
-      const response = await this.claude.messages.create({
-        model: config.claude.model,
-        max_tokens: 3000,
-        messages: [{
-          role: 'user',
-          content: `Based on real user sessions and session demand data, generate trigger tests that verify skills activate correctly.
+      const data = await claudeJSON(`Based on real user sessions and session demand data, generate trigger tests that verify skills activate correctly.
 
 ## Session Demand (from ClickHouse analytics)
 ${demandContext || 'No data'}
@@ -166,16 +147,7 @@ Generate JSON:
 {
   "triggerTests": [{ "userMessage": "realistic prompt", "expectedSkills": ["skill-id"], "context": "what this simulates", "priority": "high|medium|low" }],
   "coverageGaps": ["pattern that has NO matching skill"]
-}
-Return valid JSON only.`,
-        }],
-      });
-
-      const text = response.content[0]?.text || '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return;
-
-      const data = JSON.parse(jsonMatch[0]);
+}`);
 
       writeFileSync(
         join(this.outputDir, 'trigger-tests', `batch-${Date.now()}.json`),
@@ -198,13 +170,13 @@ async function main() {
   const consumer = new EvalConsumer();
   await consumer.init();
 
-  const kafka = new PubSubConsumerGroup('eval-consumer-group', logger);
+  const pubsub = new PubSubConsumerGroup('eval-consumer-group', logger);
 
-  kafka
+  pubsub
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
-  await kafka.start();
+  await pubsub.start();
   startHealthServer(3006);
 
   process.on('SIGINT', async () => {
@@ -213,7 +185,7 @@ async function main() {
     }
     await consumer.stores.close();
     logger.info('Shutting down', consumer.stats);
-    await kafka.stop();
+    await pubsub.stop();
     process.exit(0);
   });
 }

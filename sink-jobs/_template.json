@@ -1,0 +1,77 @@
+{
+  "id": "tenant-name",
+  "name": "Human-readable name",
+  "enabled": false,
+  "schedule": "hourly",
+
+  "sources": [
+    {
+      "type": "claude-sessions",
+      "path": "~/.claude",
+      "since": "7d",
+      "deepAnalysisFile": null,
+      "_comment": "Path to deep-analysis.json if pre-analyzed, null to analyze on ingest"
+    },
+    {
+      "type": "skills",
+      "path": "/path/to/skills/directory",
+      "limit": 0,
+      "_comment": "0 = all skills, N = limit to N skills"
+    },
+    {
+      "type": "codebase",
+      "repos": ["/path/to/repo"],
+      "_comment": "Git repos to scan for code patterns"
+    },
+    {
+      "type": "pubsub",
+      "topics": ["sink-skills-analyzed", "sink-sessions-analyzed"],
+      "project": "gcp-project-id",
+      "_comment": "Read from Pub/Sub topics instead of local files"
+    }
+  ],
+
+  "processors": [
+    {
+      "type": "gap-detection",
+      "config": {
+        "minSessionsForGap": 1,
+        "themes": ["all"]
+      }
+    },
+    {
+      "type": "skill-generation",
+      "config": {
+        "batchSize": 3,
+        "maxGapsPerRun": 12,
+        "bodyMaxWords": 150
+      }
+    },
+    {
+      "type": "eval",
+      "config": {
+        "promoteThreshold": 70,
+        "reviseRange": [50, 69],
+        "maxRevisions": 10
+      }
+    }
+  ],
+
+  "outputs": {
+    "skills": {
+      "target": "nario-dev-skills | nario-tenant-bundle | file",
+      "narioDir": "/path/to/nario",
+      "bundleId": "tenant_name",
+      "evalGate": 70,
+      "_comment": "nario-dev-skills = .claude/dev-skills, nario-tenant-bundle = Mongo push, file = local output"
+    },
+    "graph": {
+      "target": "neo4j | file",
+      "path": "output/skill-graph.json"
+    },
+    "wiki": {
+      "target": "file",
+      "path": "output/wiki"
+    }
+  }
+}

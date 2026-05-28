@@ -1,4 +1,4 @@
-import { Kafka } from 'kafkajs';
+import { PubSub } from '@google-cloud/pubsub';
 import { config } from '../src/shared/config.js';
 import { createLogger } from '../src/shared/logger.js';
 
@@ -84,70 +84,31 @@ const SESSION_ANALYZED = {
   },
 };
 
-const SESSION_TOOLS = {
-  sessionId: 'hello-world-session-001',
-  tools: [
-    { name: 'Read', count: 8 },
-    { name: 'Edit', count: 5 },
-    { name: 'Bash', count: 4 },
-    { name: 'Write', count: 3 },
-  ],
-};
-
-const SESSION_FILES = {
-  sessionId: 'hello-world-session-001',
-  files: [
-    { path: 'src/index.js', reads: 3, writes: 1, edits: 2 },
-    { path: 'package.json', reads: 2, writes: 1, edits: 0 },
-  ],
-};
-
-const SKILL_ENTITIES = {
-  skillId: 'hello-world-skill',
-  entities: [
-    { name: 'testing', type: 'tag' },
-    { name: 'bash', type: 'tool' },
-    { name: 'validation', type: 'tag' },
-  ],
-};
-
-const SKILL_DEPENDENCIES = {
-  skillId: 'hello-world-skill',
-  dependencies: [
-    { skillId: 'bash-scripting', type: 'depends_on', confidence: 0.7 },
-  ],
-};
-
 async function main() {
-  const kafka = new Kafka({
-    clientId: 'hello-world-producer',
-    brokers: config.kafka.brokers,
-    ssl: config.kafka.ssl || false,
-  });
-
-  const producer = kafka.producer();
-  await producer.connect();
-  logger.info('Producer connected', { brokers: config.kafka.brokers });
+  const pubsub = new PubSub({ projectId: config.gcp.projectId });
+  logger.info('Publishing to Pub/Sub', { projectId: config.gcp.projectId });
 
   const messages = [
     { topic: config.topics.skillsAnalyzed, key: 'hello-world-skill', value: SKILL_ANALYZED },
     { topic: config.topics.sessionsAnalyzed, key: 'hello-world-session-001', value: SESSION_ANALYZED },
-    { topic: config.topics.sessionsTools, key: 'hello-world-session-001', value: SESSION_TOOLS },
-    { topic: config.topics.sessionsFiles, key: 'hello-world-session-001', value: SESSION_FILES },
-    { topic: config.topics.skillsEntities, key: 'hello-world-skill', value: SKILL_ENTITIES },
-    { topic: config.topics.skillsDependencies, key: 'hello-world-skill', value: SKILL_DEPENDENCIES },
   ];
 
   for (const msg of messages) {
-    await producer.send({
-      topic: msg.topic,
-      messages: [{ key: msg.key, value: JSON.stringify(msg.value) }],
+    const topic = pubsub.topic(msg.topic);
+    const [exists] = await topic.exists();
+    if (!exists) {
+      await topic.create();
+      logger.info(`Created topic: ${msg.topic}`);
+    }
+
+    const messageId = await topic.publishMessage({
+      data: Buffer.from(JSON.stringify(msg.value)),
+      attributes: { sourceId: msg.key, sourceType: msg.topic.includes('skill') ? 'skill' : 'session' },
     });
-    logger.info(`Produced to ${msg.topic}`, { key: msg.key });
+    logger.info(`Published to ${msg.topic}`, { key: msg.key, messageId });
   }
 
-  logger.info('All hello-world messages produced. Start consumers to verify consumption.');
-  await producer.disconnect();
+  logger.info('All hello-world messages published. Start consumers to verify.');
 }
 
 main().catch((err) => {

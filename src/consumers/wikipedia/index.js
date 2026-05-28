@@ -1,6 +1,5 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import Anthropic from '@anthropic-ai/sdk';
 import { PubSubConsumerGroup } from '../../shared/pubsub-consumer.js';
 import { config } from '../../shared/config.js';
 import { createLogger } from '../../shared/logger.js';
@@ -12,7 +11,6 @@ const metrics = createMetrics('wikipedia');
 
 class WikipediaConsumer {
   constructor() {
-    this.claude = new Anthropic();
     this.wikiDir = join(config.outputDir, 'wiki');
     this.indexPath = join(this.wikiDir, '_index.json');
     this.articles = new Map();
@@ -124,10 +122,11 @@ class WikipediaConsumer {
       lines.push('');
     }
 
-    if (skill.allowedTools?.length) {
+    const tools = Array.isArray(skill.allowedTools) ? skill.allowedTools : typeof skill.allowedTools === 'string' ? skill.allowedTools.split(',').map(s => s.trim()).filter(Boolean) : [];
+    if (tools.length) {
       lines.push('## Tools');
       lines.push('');
-      lines.push(skill.allowedTools.map(t => `\`${t}\``).join(', '));
+      lines.push(tools.map(t => `\`${t}\``).join(', '));
       lines.push('');
     }
 
@@ -142,67 +141,144 @@ class WikipediaConsumer {
     const session = value;
     const sessionId = session.sessionId || session.sourceId || key;
     const analysis = session.analysis || {};
+    const deep = session.deep || {};
 
-    const article = this.buildSessionArticle(session, analysis);
+    const article = this.buildSessionArticle(session, analysis, deep);
     const filePath = join(this.wikiDir, 'sessions', `${sessionId}.md`);
     writeFileSync(filePath, article);
 
-    const topics = (analysis.topics || []).map(t => t.topic);
+    const keywords = [];
+    for (const t of (analysis.topics || [])) keywords.push(t.topic);
+    for (const c of (deep.connections?.relatedConcepts || [])) keywords.push(c);
+    for (const s of (deep.fundamentalSkillsNeeded || [])) keywords.push(s.skill);
+    if (deep.projectContext?.techStack) keywords.push(...deep.projectContext.techStack);
 
-    for (const topic of topics) {
+    const uniqueKeywords = [...new Set(keywords.map(k => k.toLowerCase()))];
+
+    for (const topic of uniqueKeywords) {
       await this.ensureTopicArticle(topic);
     }
 
     const entry = {
       id: sessionId,
-      title: `Session: ${session.project || 'unknown'} (${analysis.categories?.primary || 'unknown'})`,
+      title: deep.userGoal ? deep.userGoal.slice(0, 80) : `Session: ${session.project || 'unknown'}`,
       type: 'session',
       path: `sessions/${sessionId}.md`,
       category: analysis.categories?.primary || 'unknown',
-      keywords: topics,
+      keywords: uniqueKeywords,
       project: session.project || 'unknown',
     };
 
     this.articles.set(sessionId, entry);
 
-    for (const topic of topics) {
-      const existing = this.keywords.get(topic) || [];
+    for (const kw of uniqueKeywords) {
+      const existing = this.keywords.get(kw) || [];
       if (!existing.includes(sessionId)) {
         existing.push(sessionId);
-        this.keywords.set(topic, existing);
+        this.keywords.set(kw, existing);
       }
     }
 
     this.stats.articles++;
     if (this.stats.articles % 50 === 0) this.saveIndex();
 
-    logger.info(`Created session article: ${sessionId}`, { topics: topics.length });
+    logger.info(`Created session article: ${sessionId}`, { keywords: uniqueKeywords.length });
   }
 
-  buildSessionArticle(session, analysis) {
+  buildSessionArticle(session, analysis, deep) {
     const lines = [];
-    lines.push(`# Session: ${session.project || 'Unknown Project'}`);
+    const goal = deep.userGoal || `Session in ${session.project || 'unknown'}`;
+    lines.push(`# ${goal}`);
     lines.push('');
 
-    lines.push('## Summary');
-    lines.push('');
-    lines.push(`| Metric | Value |`);
-    lines.push(`|--------|-------|`);
-    lines.push(`| Project | ${session.project || 'N/A'} |`);
-    lines.push(`| Category | ${analysis.categories?.primary || 'N/A'} |`);
-    lines.push(`| Complexity | ${analysis.complexity?.level || 'N/A'} |`);
-    lines.push(`| Duration | ${analysis.duration?.minutes?.toFixed(1) || 0} min |`);
-    lines.push(`| Messages | ${session.messageCount || 0} |`);
-    lines.push(`| Total Tokens | ${analysis.tokenUsage?.totalTokens?.toLocaleString() || 0} |`);
-    lines.push(`| Tool Calls | ${analysis.toolUsage?.totalToolCalls || 0} |`);
-    lines.push('');
-
-    if (analysis.topics?.length) {
-      lines.push('## Topics');
+    if (deep.whatTheyBuilt) {
+      lines.push(`> ${deep.whatTheyBuilt}`);
       lines.push('');
-      for (const t of analysis.topics) {
-        lines.push(`- [[${t.topic}]] (score: ${t.score})`);
+    }
+
+    lines.push('## Context');
+    lines.push('');
+    lines.push(`| | |`);
+    lines.push(`|---|---|`);
+    if (deep.projectContext?.projectName) lines.push(`| **Project** | ${deep.projectContext.projectName} |`);
+    if (deep.projectContext?.projectType) lines.push(`| **Type** | ${deep.projectContext.projectType} |`);
+    if (deep.projectContext?.stage) lines.push(`| **Stage** | ${deep.projectContext.stage} |`);
+    lines.push(`| **Duration** | ${analysis.duration?.minutes?.toFixed(0) || 0} min |`);
+    lines.push(`| **Messages** | ${session.messageCount || 0} |`);
+    lines.push(`| **Tokens** | ${(analysis.tokenUsage?.totalTokens || 0).toLocaleString()} |`);
+    lines.push(`| **Tool Calls** | ${analysis.toolUsage?.totalToolCalls || 0} |`);
+    if (deep.sessionQuality?.outcome) lines.push(`| **Outcome** | ${deep.sessionQuality.outcome} |`);
+    lines.push('');
+
+    if (deep.projectContext?.techStack?.length) {
+      lines.push('## Tech Stack');
+      lines.push('');
+      lines.push(deep.projectContext.techStack.map(t => `[[${t}]]`).join(' · '));
+      lines.push('');
+    }
+
+    if (deep.problems?.length) {
+      lines.push('## Problems Encountered');
+      lines.push('');
+      for (const p of deep.problems) {
+        lines.push(`- **${p.severity}**: ${p.description}`);
+        if (p.resolution) lines.push(`  - *Resolution:* ${p.resolution}`);
       }
+      lines.push('');
+    }
+
+    if (deep.struggles?.length) {
+      lines.push('## Struggles & Skill Gaps');
+      lines.push('');
+      for (const s of deep.struggles) {
+        lines.push(`- **${s.area}**: ${s.evidence}`);
+        if (s.skillGap) lines.push(`  - *Gap:* ${s.skillGap}`);
+      }
+      lines.push('');
+    }
+
+    if (deep.fundamentalSkillsNeeded?.length) {
+      lines.push('## Skills Needed');
+      lines.push('');
+      for (const s of deep.fundamentalSkillsNeeded) {
+        lines.push(`- [[${s.skill}]] (${s.category}, ${s.proficiencyLevel}) — ${s.reason}`);
+      }
+      lines.push('');
+    }
+
+    if (deep.orchestrationPattern) {
+      lines.push('## Workflow Pattern');
+      lines.push('');
+      lines.push(`\`${deep.orchestrationPattern.workflow || ''}\``);
+      lines.push('');
+      if (deep.orchestrationPattern.steps?.length) {
+        for (const step of deep.orchestrationPattern.steps) {
+          lines.push(`1. ${step}`);
+        }
+        lines.push('');
+      }
+    }
+
+    if (deep.connections?.relatedConcepts?.length) {
+      lines.push('## Related Concepts');
+      lines.push('');
+      lines.push(deep.connections.relatedConcepts.map(c => `[[${c}]]`).join(' · '));
+      lines.push('');
+    }
+
+    if (deep.connections?.nextSteps?.length) {
+      lines.push('## Next Steps');
+      lines.push('');
+      for (const step of deep.connections.nextSteps) {
+        lines.push(`- ${step}`);
+      }
+      lines.push('');
+    }
+
+    if (deep.sessionQuality?.keyInsight) {
+      lines.push('## Key Insight');
+      lines.push('');
+      lines.push(`> ${deep.sessionQuality.keyInsight}`);
       lines.push('');
     }
 
@@ -215,20 +291,11 @@ class WikipediaConsumer {
       lines.push('');
     }
 
-    if (analysis.filesAccessed?.length) {
-      lines.push('## Files Accessed');
-      lines.push('');
-      for (const f of analysis.filesAccessed.slice(0, 20)) {
-        lines.push(`- \`${f.path}\` (R:${f.reads} W:${f.writes} E:${f.edits})`);
-      }
-      lines.push('');
-    }
-
     return lines.join('\n');
   }
 
   async ensureTopicArticle(topic) {
-    const topicId = topic.replace(/\s+/g, '-').toLowerCase();
+    const topicId = topic.replace(/[^a-z0-9\-]/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase();
     const filePath = join(this.wikiDir, 'topics', `${topicId}.md`);
 
     if (existsSync(filePath)) return;
@@ -265,19 +332,19 @@ async function main() {
   const consumer = new WikipediaConsumer();
   consumer.init();
 
-  const kafka = new PubSubConsumerGroup('wikipedia-consumer-group', logger);
+  const pubsub = new PubSubConsumerGroup('wikipedia-consumer-group', logger);
 
-  kafka
+  pubsub
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
-  await kafka.start();
+  await pubsub.start();
   startHealthServer(3003);
 
   process.on('SIGINT', async () => {
     consumer.saveIndex();
     logger.info('Shutting down', consumer.stats);
-    await kafka.stop();
+    await pubsub.stop();
     process.exit(0);
   });
 }

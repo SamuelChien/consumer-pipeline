@@ -19,6 +19,12 @@ class ClickHouseConsumer {
     this.stats = { skills: 0, sessions: 0, entities: 0, dependencies: 0, tools: 0, files: 0 };
   }
 
+  toArray(val) {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string' && val.trim()) return val.split(',').map(s => s.trim()).filter(Boolean);
+    return [];
+  }
+
   async handleSkillAnalyzed({ key, value }) {
     const skill = value;
     const analysis = skill.analysis || {};
@@ -35,16 +41,16 @@ class ClickHouseConsumer {
         risk: skill.risk || 'safe',
         author: skill.author || 'unknown',
         version: skill.version || '1.0.0',
-        platforms: skill.platforms || [],
-        tags: skill.tags || [],
-        allowed_tools: skill.allowedTools || [],
+        platforms: this.toArray(skill.platforms),
+        tags: this.toArray(skill.tags),
+        allowed_tools: this.toArray(skill.allowedTools),
         quality_score: analysis.qualityScore?.score || 0,
         quality_grade: skill.evaluation?.grade || 'F',
         complexity_level: analysis.complexity?.level || 'basic',
         body_length: skill.bodyLength || 0,
         heading_count: (skill.headings || []).length,
         code_block_count: (skill.codeBlocks || []).length,
-        keywords: (analysis.keywords || []).map(k => k.word || k),
+        keywords: this.toArray((analysis.keywords || []).map(k => k.word || k)),
         source_collection: skill.sourceCollection || '',
       }],
       format: 'JSONEachRow',
@@ -180,13 +186,13 @@ class ClickHouseConsumer {
 
 async function main() {
   const consumer = new ClickHouseConsumer();
-  const kafka = new PubSubConsumerGroup('clickhouse-consumer-group', logger);
+  const pubsub = new PubSubConsumerGroup('clickhouse-consumer-group', logger);
 
-  kafka
+  pubsub
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
-  await kafka.start();
+  await pubsub.start();
 
   startHealthServer(3002, {
     clickhouse: async () => { await consumer.client.ping(); },
@@ -195,7 +201,7 @@ async function main() {
   process.on('SIGINT', async () => {
     logger.info('Shutting down', consumer.stats);
     await consumer.client.close();
-    await kafka.stop();
+    await pubsub.stop();
     process.exit(0);
   });
 }

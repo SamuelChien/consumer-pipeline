@@ -1,4 +1,4 @@
-import { Kafka } from 'kafkajs';
+import { PubSub } from '@google-cloud/pubsub';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { config } from '../src/shared/config.js';
@@ -9,9 +9,9 @@ const logger = createLogger('replay-data');
 
 const SKILLS_DIR = process.env.SKILLS_DIR || '/Users/samuelchien/dev/mega-skills-directory/mega-skills-union';
 const SESSIONS_OUTPUT = process.env.SESSIONS_OUTPUT || '/Users/samuelchien/dev/claude-sessions-pipeline/output';
-const SKILLS_OUTPUT = process.env.SKILLS_OUTPUT || '/Users/samuelchien/dev/skills-intelligence-pipeline/output';
 const MAX_SKILLS = parseInt(process.env.MAX_SKILLS || '0') || Infinity;
 const MAX_SESSIONS = parseInt(process.env.MAX_SESSIONS || '0') || Infinity;
+const BATCH_SIZE = 50;
 
 function parseSkillFile(filePath, dirName) {
   const content = readFileSync(filePath, 'utf-8');
@@ -70,7 +70,7 @@ function classifyCategory(text) {
     frontend: ['react', 'vue', 'angular', 'css', 'html', 'dom', 'component', 'ui', 'ux', 'tailwind'],
     backend: ['api', 'server', 'database', 'rest', 'graphql', 'microservice', 'endpoint', 'middleware'],
     ai_ml: ['ai', 'machine-learning', 'model', 'llm', 'prompt', 'embedding', 'neural', 'training', 'inference'],
-    data: ['data', 'sql', 'etl', 'pipeline', 'analytics', 'warehouse', 'spark', 'kafka'],
+    data: ['data', 'sql', 'etl', 'pipeline', 'analytics', 'warehouse', 'spark'],
     cloud: ['aws', 'gcp', 'azure', 'cloud', 'lambda', 'serverless', 's3', 'iam'],
     documentation: ['doc', 'readme', 'wiki', 'changelog', 'guide', 'tutorial'],
     productivity: ['workflow', 'automation', 'script', 'cli', 'tool', 'utility'],
@@ -135,20 +135,15 @@ function analyzeSkill(skill) {
 }
 
 async function main() {
-  const kafka = new Kafka({
-    clientId: 'replay-producer',
-    brokers: config.kafka.brokers,
-    ssl: config.kafka.ssl || false,
-  });
+  const pubsub = new PubSub({ projectId: config.gcp.projectId });
+  logger.info('Connected to Pub/Sub', { projectId: config.gcp.projectId });
 
-  const producer = kafka.producer();
-  await producer.connect();
-  logger.info('Connected to Kafka', { brokers: config.kafka.brokers });
+  const skillsTopic = pubsub.topic(config.topics.skillsAnalyzed);
+  const sessionsTopic = pubsub.topic(config.topics.sessionsAnalyzed);
 
   let skillCount = 0;
   let sessionCount = 0;
 
-  // Replay skills
   if (existsSync(SKILLS_DIR)) {
     const dirs = readdirSync(SKILLS_DIR, { withFileTypes: true })
       .filter(d => d.isDirectory())
@@ -156,7 +151,7 @@ async function main() {
 
     logger.info(`Found ${dirs.length} skill directories`);
 
-    const batch = [];
+    let batch = [];
     for (const dir of dirs) {
       const skillPath = join(SKILLS_DIR, dir.name, 'SKILL.md');
       if (!existsSync(skillPath)) continue;
@@ -166,30 +161,28 @@ async function main() {
         const analyzed = analyzeSkill(skill);
         analyzed.body = analyzed.body.slice(0, 5000);
 
-        batch.push({
-          topic: config.topics.skillsAnalyzed,
-          messages: [{ key: analyzed.id, value: JSON.stringify(analyzed) }],
-        });
+        batch.push(skillsTopic.publishMessage({
+          data: Buffer.from(JSON.stringify(analyzed)),
+          attributes: { sourceId: analyzed.id, sourceType: 'skill' },
+        }));
 
         skillCount++;
-        if (batch.length >= 50) {
-          await producer.sendBatch({ topicMessages: batch.splice(0) });
-          logger.info(`Produced ${skillCount} skills...`);
+        if (batch.length >= BATCH_SIZE) {
+          await Promise.all(batch);
+          batch = [];
+          logger.info(`Published ${skillCount} skills...`);
         }
       } catch (err) {
-        // skip malformed skills silently
+        // skip malformed skills
       }
     }
 
-    if (batch.length > 0) {
-      await producer.sendBatch({ topicMessages: batch });
-    }
-    logger.info(`Produced ${skillCount} skills total`);
+    if (batch.length > 0) await Promise.all(batch);
+    logger.info(`Published ${skillCount} skills total`);
   } else {
     logger.warn('Skills directory not found', { path: SKILLS_DIR });
   }
 
-  // Replay sessions from deep-analysis.json
   const deepAnalysisPath = join(SESSIONS_OUTPUT, 'deep-analysis.json');
   if (existsSync(deepAnalysisPath)) {
     const sessions = JSON.parse(readFileSync(deepAnalysisPath, 'utf-8'));
@@ -197,6 +190,7 @@ async function main() {
 
     logger.info(`Found ${sessions.length} sessions, replaying ${toReplay.length}`);
 
+    let batch = [];
     for (const session of toReplay) {
       const analyzed = {
         sessionId: session.sessionId,
@@ -207,20 +201,26 @@ async function main() {
         processedAt: new Date().toISOString(),
       };
 
-      await producer.send({
-        topic: config.topics.sessionsAnalyzed,
-        messages: [{ key: session.sessionId, value: JSON.stringify(analyzed) }],
-      });
+      batch.push(sessionsTopic.publishMessage({
+        data: Buffer.from(JSON.stringify(analyzed)),
+        attributes: { sourceId: session.sessionId, sourceType: 'session' },
+      }));
 
       sessionCount++;
+      if (batch.length >= BATCH_SIZE) {
+        await Promise.all(batch);
+        batch = [];
+        logger.info(`Published ${sessionCount} sessions...`);
+      }
     }
-    logger.info(`Produced ${sessionCount} sessions total`);
+
+    if (batch.length > 0) await Promise.all(batch);
+    logger.info(`Published ${sessionCount} sessions total`);
   } else {
     logger.warn('Sessions deep-analysis.json not found', { path: deepAnalysisPath });
   }
 
   logger.info('Replay complete', { skills: skillCount, sessions: sessionCount });
-  await producer.disconnect();
 }
 
 main().catch((err) => {

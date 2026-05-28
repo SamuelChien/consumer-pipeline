@@ -112,3 +112,26 @@ AS SELECT
     avg(duration_minutes) as avg_duration
 FROM consumer.sessions
 GROUP BY session_date, primary_category;
+
+-- Consumer pipeline metrics
+CREATE TABLE IF NOT EXISTS consumer.consumer_metrics (
+    consumer String,
+    event_type String,
+    item_id String,
+    item_type String,
+    project String,
+    count UInt32 DEFAULT 1,
+    duration_ms UInt32 DEFAULT 0,
+    error String DEFAULT '',
+    created_at DateTime DEFAULT now()
+) ENGINE = MergeTree()
+ORDER BY (consumer, event_type, created_at);
+
+CREATE TABLE IF NOT EXISTS consumer.consumer_status (
+    consumer String,
+    status String,
+    messages_processed UInt64 DEFAULT 0,
+    errors UInt32 DEFAULT 0,
+    updated_at DateTime DEFAULT now()
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY consumer;

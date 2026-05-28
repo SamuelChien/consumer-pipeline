@@ -49,27 +49,18 @@ kubectl -n consumer-pipeline rollout status deployment/chromadb --timeout=120s |
 kubectl -n consumer-pipeline rollout status statefulset/clickhouse --timeout=120s || true
 kubectl -n consumer-pipeline rollout status statefulset/neo4j --timeout=120s || true
 
-# 6. Provision Kafka topics
-echo "--- Provisioning Kafka topics ---"
-kubectl -n consumer-pipeline run topic-provisioner \
-  --image="${IMAGE}:${TAG}" \
-  --restart=Never \
-  --rm -it \
-  --env="KAFKA_BROKERS=kafka-service.email-intelligence.svc.cluster.local:9092" \
-  --command -- node scripts/provision-topics.js || true
-
-# 7. Deploy consumers
+# 6. Deploy consumers
 echo "--- Deploying consumers ---"
 kubectl apply -f k8s/base/consumers.yaml
 
-# 8. Wait for rollout
+# 7. Wait for rollout
 echo "--- Waiting for consumer rollouts ---"
 for consumer in chromadb clickhouse wikipedia graph skill-updater eval; do
   echo "  Waiting for ${consumer}-consumer..."
   kubectl -n consumer-pipeline rollout status "deployment/${consumer}-consumer" --timeout=120s || true
 done
 
-# 9. Status
+# 8. Status
 echo ""
 echo "=== Deployment Status ==="
 kubectl -n consumer-pipeline get pods

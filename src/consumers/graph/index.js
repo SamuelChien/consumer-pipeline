@@ -121,6 +121,7 @@ class GraphConsumer {
     const sessionData = value;
     const sessionId = sessionData.sessionId || key;
     const analysis = sessionData.analysis || {};
+    const deep = sessionData.deep || {};
     const session = this.driver.session();
 
     try {
@@ -131,6 +132,9 @@ class GraphConsumer {
             a.category = $category,
             a.complexity = $complexity,
             a.tokenCount = $tokens,
+            a.userGoal = $goal,
+            a.whatTheyBuilt = $built,
+            a.outcome = $outcome,
             a.updatedAt = datetime()
       `, {
         id: sessionId,
@@ -138,17 +142,32 @@ class GraphConsumer {
         category: analysis.categories?.primary || 'unknown',
         complexity: analysis.complexity?.level || 'simple',
         tokens: neo4j.int(analysis.tokenUsage?.totalTokens || 0),
+        goal: (deep.userGoal || '').slice(0, 500),
+        built: (deep.whatTheyBuilt || '').slice(0, 500),
+        outcome: deep.sessionQuality?.outcome || 'unknown',
       });
 
-      const topics = analysis.topics || [];
-      for (const t of topics) {
+      const allTopics = [
+        ...(analysis.topics || []).map(t => t.topic),
+        ...(deep.connections?.relatedConcepts || []),
+      ];
+      for (const topicName of [...new Set(allTopics)]) {
         await session.run(`
           MERGE (topic:Topic {name: $name})
           WITH topic
           MATCH (a:Article {id: $articleId})
-          MERGE (a)-[r:ABOUT_TOPIC]->(topic)
-          SET r.score = $score
-        `, { name: t.topic, articleId: sessionId, score: t.score || 0 });
+          MERGE (a)-[:ABOUT_TOPIC]->(topic)
+        `, { name: topicName, articleId: sessionId });
+        this.stats.edges++;
+      }
+
+      for (const tech of (deep.projectContext?.techStack || [])) {
+        await session.run(`
+          MERGE (t:Tool {name: $name})
+          WITH t
+          MATCH (a:Article {id: $articleId})
+          MERGE (a)-[:USED_TOOL]->(t)
+        `, { name: tech, articleId: sessionId });
         this.stats.edges++;
       }
 
@@ -164,11 +183,28 @@ class GraphConsumer {
         this.stats.edges++;
       }
 
+      for (const needed of (deep.fundamentalSkillsNeeded || [])) {
+        await session.run(`
+          MERGE (s:Skill {id: $skillId})
+          SET s.name = coalesce(s.name, $skillId)
+          WITH s
+          MATCH (a:Article {id: $articleId})
+          MERGE (a)-[r:NEEDS_SKILL]->(s)
+          SET r.urgency = $urgency, r.proficiency = $proficiency
+        `, {
+          skillId: needed.skill.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          articleId: sessionId,
+          urgency: needed.urgency || 'medium',
+          proficiency: needed.proficiencyLevel || 'beginner',
+        });
+        this.stats.edges++;
+      }
+
       this.bm25.addDocument(sessionId, [
-        sessionData.project || '',
-        analysis.categories?.primary || '',
-        topics.map(t => t.topic).join(' '),
-        tools.map(t => t.name).join(' '),
+        deep.userGoal || '',
+        deep.whatTheyBuilt || '',
+        (deep.connections?.relatedConcepts || []).join(' '),
+        (deep.projectContext?.techStack || []).join(' '),
       ].join(' '));
 
       this.stats.nodes++;
@@ -279,13 +315,13 @@ async function main() {
   const consumer = new GraphConsumer();
   await consumer.init();
 
-  const kafka = new PubSubConsumerGroup('graph-consumer-group', logger);
+  const pubsub = new PubSubConsumerGroup('graph-consumer-group', logger);
 
-  kafka
+  pubsub
     .on(config.topics.skillsAnalyzed, (msg) => consumer.handleSkillAnalyzed(msg))
     .on(config.topics.sessionsAnalyzed, (msg) => consumer.handleSessionAnalyzed(msg));
 
-  await kafka.start();
+  await pubsub.start();
 
   setInterval(() => consumer.runRankingPass(), 5 * 60 * 1000);
 
@@ -296,7 +332,7 @@ async function main() {
   process.on('SIGINT', async () => {
     await consumer.runRankingPass();
     await consumer.driver.close();
-    await kafka.stop();
+    await pubsub.stop();
     logger.info('Shutting down', consumer.stats);
     process.exit(0);
   });
