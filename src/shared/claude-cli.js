@@ -139,6 +139,88 @@ export function claudeAgent(prompt, {
   return next;
 }
 
+/**
+ * Run Claude as a ONE-SHOT prose responder with NO tools — the eval-gate path.
+ *
+ * The gate measures whether a skill's guidance improves the model's WRITTEN answer,
+ * so the model must produce prose, not go agentic. We therefore:
+ *   - disable every built-in tool with `--tools ""` and every MCP tool with
+ *     `--strict-mcp-config` (loads no MCP servers). Without this the model spends
+ *     its single turn on a tool call, hits error_max_turns, and returns an EMPTY
+ *     response — which is exactly the "eval scored 0 / assertions_total 0" bug.
+ *   - strip CLAUDECODE: when this runs nested inside a Claude Code session the var
+ *     leaks in and alters headless behavior (the skill-bench judge strips it too).
+ *   - cap at one turn and parse the json envelope for the final text + usage.
+ *
+ * Resolves (never rejects) with { response, usage, isError, error, raw } so callers
+ * can record an infra error instead of crashing the whole gate.
+ */
+export function claudeProse(prompt, {
+  model = process.env.EVAL_MODEL || 'claude-sonnet-4-6',
+  timeoutMs = 300_000,
+  maxTokens = 8000,
+  dryRun = false,
+} = {}) {
+  const args = [
+    '-p', prompt,
+    '--model', model,
+    '--max-turns', '1',
+    '--output-format', 'json',
+    '--tools', '',            // disable all built-in tools
+    '--strict-mcp-config',    // load no MCP servers -> no MCP tools either
+  ];
+
+  if (dryRun) {
+    return Promise.resolve({ dryRun: true, model, promptPreview: prompt.slice(0, 800) });
+  }
+
+  const env = { ...process.env, FORCE_COLOR: '0', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens) };
+  delete env.CLAUDECODE;
+
+  const run = () => new Promise((resolve) => {
+    const proc = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => { stdout += d; });
+    proc.stderr.on('data', (d) => { stderr += d; });
+
+    const timer = setTimeout(() => {
+      proc.kill('SIGTERM');
+      resolve({ response: '', usage: {}, isError: true, error: `claude prose timed out after ${timeoutMs}ms`, raw: stdout });
+    }, timeoutMs);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      let envelope;
+      try { envelope = JSON.parse(stdout); } catch {
+        return resolve({
+          response: stdout.trim(), usage: {}, isError: code !== 0,
+          error: code !== 0 ? `claude exited ${code}: ${(stderr || stdout).slice(0, 300)}` : null,
+          raw: stdout,
+        });
+      }
+      const response = typeof envelope.result === 'string' ? envelope.result : '';
+      resolve({
+        response,
+        usage: envelope.usage || {},
+        isError: !!envelope.is_error,
+        error: envelope.is_error ? (envelope.subtype || 'is_error') : null,
+        raw: stdout,
+      });
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ response: '', usage: {}, isError: true, error: `claude prose spawn failed: ${err.message}`, raw: '' });
+    });
+  });
+
+  // Serialize through the shared chain so eval calls don't stampede long agent runs.
+  const next = pending.then(run);
+  pending = next.catch(() => {});
+  return next;
+}
+
 export async function claudeJSON(prompt, opts) {
   const text = await claudeGenerate(prompt + '\n\nReturn valid JSON only. No markdown fences, no commentary before or after the JSON.', opts);
   const match = text.match(/\{[\s\S]*\}/);

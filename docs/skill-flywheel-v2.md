@@ -7,7 +7,7 @@
 
 > **⚠ SCOPE CORRECTION (2026-05-28):** This pipeline produces **Claude Code skills**, NOT Nario tenant bundles — the two are kept separate. The Nario-specific sections below (decision **D3**, **§6.6**, the promotion half of **§8**, slice **#5 = promoteVersion**) are **superseded**:
 > - **Output schema** = standard Claude Code `SKILL.md` (`name` + `description` + optional `allowed-tools`). No `mutates`/`parameters_summary`/`cancel_safe_points`/`expected_duration_seconds`.
-> - **Eval (#4)** = skill-bench **generic `--sampler cli`** (candidate skill mounted WITH vs baseline WITHOUT), not `nario_sampler`/`nario_production`.
+> - **Eval (#4)** = candidate skill WITH vs baseline WITHOUT, then an LLM judge. **As built (2026-05-28) this is a self-contained prose A/B in `src/eval-gate/index.js` driven by `claude` directly — NOT skill-bench's `--sampler cli`,** which tool-detoured under `--max-turns 1` and scored everything 0. See HANDOFF.md §7 for the root cause and the implemented design.
 > - **Promote (#5)** = **install into a Claude Code skills directory** (`SKILLS_TARGET_DIR`, e.g. `~/.claude/skills`), not Mongo `promoteVersion()`.
 >
 > Still valid: the multi-producer model (§9), failure-derived benchmark synthesis (§8 first half), the behavioral-gate-beats-text-rubric principle, and the cheap→expensive cascade. As-built code lives in `consumer-pipeline/src/{research-agent,connectors,eval-gate,promote}` + `src/server.js` + `src/web/`.

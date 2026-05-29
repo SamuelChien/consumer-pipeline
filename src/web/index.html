@@ -199,7 +199,7 @@ async function evalDry(sid, skid) {
   const cmds = (r.results && r.results[0] && r.results[0].commands) || [];
   const pre = document.getElementById('rp-'+sid+'-'+skid);
   pre.style.display='block';
-  pre.textContent = '# skill-bench: candidate WITH vs baseline WITHOUT\n' + (cmds.join('\n') || JSON.stringify(r,null,2));
+  pre.textContent = '# prose-guidance eval: candidate WITH vs baseline WITHOUT\n' + (cmds.join('\n') || JSON.stringify(r,null,2));
 }
 async function install(sid, skid) {
   const plan = await api('/api/promote', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sessionId:sid, skillId:skid, install:false}) });

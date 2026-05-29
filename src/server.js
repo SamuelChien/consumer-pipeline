@@ -519,7 +519,7 @@ async function handleRequest(req, res) {
       return content != null ? json(res, { content }) : json(res, { error: 'not found' }, 404);
     }
 
-    // ---- Eval gate (skill-bench, Claude Code) ----
+    // ---- Eval gate (prose A/B: candidate WITH vs baseline WITHOUT, judged by claude) ----
     if (url.pathname === '/api/eval' && req.method === 'POST') {
       const b = await parseBody(req).catch(() => ({}));
       if (b.dryRun) return json(res, await evalSession(b.sessionId, { dryRun: true, only: b.skillId || null }));

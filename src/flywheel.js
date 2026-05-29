@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-// One command: session -> research (opus 4.8 multi-turn) -> eval (skill-bench) -> promote.
-// Eval auto-skips if skill-bench isn't installed. Promote is dry unless --install.
+// One command: session -> research (opus 4.8 multi-turn) -> eval (prose A/B) -> promote.
+// Eval is on by default (self-contained, only needs `claude`); --no-eval skips it. Promote is dry unless --install.
 //
 //   npm run flywheel -- --limit 2                 research 2 sessions, eval if available, dry promote
 //   npm run flywheel -- --session <id> --reuse    reuse existing skills, eval + promote
 //   npm run flywheel -- --limit 1 --install       install passers into SKILLS_TARGET_DIR
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { loadSessions, isRealSession } from './research-agent/extract-brief.js';
@@ -17,12 +16,6 @@ import { promoteSkill } from './promote/index.js';
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ? path.resolve(process.env.OUTPUT_DIR) : path.resolve(process.cwd(), 'output');
 const SKILLS_ROOT = path.join(OUTPUT_DIR, 'research-skills');
-
-function skillBenchAvailable() {
-  const cmd = process.env.SKILL_BENCH_CMD;
-  const probe = cmd ? `command -v ${cmd} || test -x ${cmd}` : 'command -v skill-bench';
-  try { return spawnSync('sh', ['-c', probe], { stdio: 'ignore' }).status === 0; } catch { return false; }
-}
 
 function parseArgs(argv) {
   const a = { limit: 1, session: null, reuse: false, eval: null, install: false, target: undefined, dryRun: false };
@@ -42,7 +35,9 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const evalEnabled = args.eval === null ? skillBenchAvailable() : args.eval;
+  // The gate is self-contained (prose A/B judged by `claude`), so it's on by
+  // default; --no-eval skips it and promotes everything generated.
+  const evalEnabled = args.eval === null ? true : args.eval;
   const all = loadSessions().filter(isRealSession);
   const sessions = args.session ? all.filter((s) => s.sessionId === args.session) : all.slice(0, args.limit);
 
@@ -75,7 +70,7 @@ async function main() {
     totalSkills += skills.length;
     if (!skills.length) { console.log('  (no skills)'); continue; }
 
-    // 2. EVAL (skill-bench candidate WITH vs baseline WITHOUT)
+    // 2. EVAL (prose A/B: candidate WITH skill vs baseline WITHOUT, judged by claude)
     const verdicts = {};
     if (evalEnabled) {
       const ev = await evalSession(sid, {});
@@ -87,7 +82,7 @@ async function main() {
         else console.log(`     ${v.verdict === 'promote' ? '✓' : '·'} ${v.skillId}: with=${v.withScore} base=${v.baseScore} margin=${v.margin} → ${v.verdict}`);
       }
     } else {
-      console.log('  eval: skipped (skill-bench not installed) — promoting all generated');
+      console.log('  eval: skipped (--no-eval) — promoting all generated');
     }
 
     // 3. PROMOTE

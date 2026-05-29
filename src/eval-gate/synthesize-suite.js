@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
-// Synthesize a skill-bench task from the session struggle that motivated a skill.
-// Schema matches skill-bench/engine/loader.py + models.py:
-//   turns[].{role,content}, assertions[].{type,target,weight}  (target = judge prompt)
+// Synthesize an eval task from the session struggle that motivated a skill.
+// The object shape matches skill-bench/engine/loader.py + models.py
+//   (turns[].{role,content}, assertions[].{type,target,weight}; target = judge prompt)
+// so it stays a valid skill-bench task YAML, but the gate (eval-gate/index.js) now also reads
+// turns[0].content (the user ask) and assertions[0].target (the judge criteria) directly.
 
 const EVAL_MODEL = process.env.EVAL_MODEL || 'claude-sonnet-4-6';
 const TASK_TIMEOUT = Number(process.env.EVAL_TASK_TIMEOUT || 300);
