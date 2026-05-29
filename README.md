@@ -2,6 +2,14 @@
 
 Pub/Sub consumer pipeline that reads analyzed chunks from `claude-sink` and writes to purpose-built data stores. Deploys to GKE cluster (`email-intelligence-cluster`).
 
+> **Skill flywheel + vendoring note.** Beyond the Pub/Sub substrate below, this repo also contains the
+> **Claude Code skill flywheel** (`src/{research-agent,eval-gate,promote,connectors,flywheel.js}`, web UI
+> in `src/server.js`) — see `docs/HANDOFF.md` for the full runbook. It is a **standalone Node project**
+> (its own `package.json` / `package-lock.json`; run `npm install`), kept *outside* any monorepo pnpm
+> workspace when vendored (e.g. at `nario/infra/skill-pipeline`) so its deps don't tangle with the host
+> app. All config is via env vars documented in `docs/HANDOFF.md` §10; `.env.gcp` holds local-only,
+> non-secret GCP/Kafka values (gitignored) and is **not** needed by the flywheel (research/eval/promote).
+
 ## Architecture
 
 ```

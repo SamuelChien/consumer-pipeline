@@ -159,6 +159,8 @@ export function claudeProse(prompt, {
   model = process.env.EVAL_MODEL || 'claude-sonnet-4-6',
   timeoutMs = 300_000,
   maxTokens = 8000,
+  maxAttempts = 4,
+  retryDelayMs = 4000,
   dryRun = false,
 } = {}) {
   const args = [
@@ -177,7 +179,7 @@ export function claudeProse(prompt, {
   const env = { ...process.env, FORCE_COLOR: '0', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens) };
   delete env.CLAUDECODE;
 
-  const run = () => new Promise((resolve) => {
+  const attempt = () => new Promise((resolve) => {
     const proc = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
     let stdout = '';
     let stderr = '';
@@ -215,8 +217,20 @@ export function claudeProse(prompt, {
     });
   });
 
+  // Transient API hiccups (rate limits, 5xx) surface as isError or an empty
+  // response; retry with linear backoff since these calls are idempotent reads.
+  // (The eval gate saw ~2/4 pairwise rounds fail this way without a retry.)
   // Serialize through the shared chain so eval calls don't stampede long agent runs.
-  const next = pending.then(run);
+  const runWithRetry = async () => {
+    let result;
+    for (let i = 0; i < maxAttempts; i++) {
+      result = await attempt();
+      if (!result.isError && result.response.trim()) return result;
+      if (i < maxAttempts - 1) await new Promise((r) => setTimeout(r, retryDelayMs * 2 ** i)); // 4s, 8s, 16s — rate-limit friendly
+    }
+    return result;
+  };
+  const next = pending.then(runWithRetry);
   pending = next.catch(() => {});
   return next;
 }

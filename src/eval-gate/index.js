@@ -6,8 +6,12 @@
 // struggle (synthesize-suite.js), then sample two prose answers from EVAL_MODEL:
 //   WITH     — the SKILL.md is injected into context
 //   BASELINE — no skill
-// A judge model scores each answer against the criteria. We promote only if the
-// WITH answer clears EVAL_PASS and beats baseline by EVAL_MARGIN.
+// Two judge signals, because absolute scoring alone can't separate two strong
+// near-ceiling answers (both land ~0.85): (1) an ABSOLUTE judge on each answer =
+// a quality floor (WITH must clear EVAL_PASS); (2) a PAIRWISE judge that compares
+// the two answers head-to-head over EVAL_SAMPLES position-swapped rounds = the
+// sensitive "did the skill help" signal. Promote iff WITH clears the floor AND
+// wins ≥ EVAL_WIN_RATE of the decided pairwise rounds.
 //
 // Sampling is prose-only with NO tools (see claudeProse): the model must produce
 // guidance, not go agentic. The previous skill-bench CLI-sampler path let the
@@ -28,6 +32,8 @@ const EVAL_MODEL = process.env.EVAL_MODEL || 'claude-sonnet-4-6';
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL || EVAL_MODEL;
 const EVAL_PASS = Number(process.env.EVAL_PASS || 0.7);    // candidate must clear this WITH the skill
 const EVAL_MARGIN = Number(process.env.EVAL_MARGIN || 0.1); // and beat baseline by this much
+const EVAL_SAMPLES = Math.max(2, Number(process.env.EVAL_SAMPLES || 4)); // pairwise comparison rounds (position-swapped) — see pairwiseCompare
+const EVAL_WIN_RATE = Number(process.env.EVAL_WIN_RATE || 0.6); // WITH must win ≥ this share of *decided* pairwise rounds to promote
 const ANSWER_TIMEOUT_MS = Number(process.env.EVAL_TASK_TIMEOUT || 300) * 1000;
 const JUDGE_LOG_CHARS = 12000; // how much of the answer the judge sees
 
@@ -90,8 +96,8 @@ function parseJudge(text) {
   }
 }
 
-/** Sample one prose answer (optionally with the skill) and judge it. */
-async function sampleAndJudge({ ask, criteria, skillContent }) {
+/** Sample one prose answer (optionally with the skill) and judge it once. */
+async function sampleAndJudgeOnce({ ask, criteria, skillContent }) {
   const ans = await claudeProse(answerPrompt(ask, skillContent), { model: EVAL_MODEL, timeoutMs: ANSWER_TIMEOUT_MS });
   if (ans.isError || !ans.response.trim()) {
     return { score: null, answer: ans.response || '', reasoning: null, infraError: ans.error || 'empty_response' };
@@ -102,6 +108,73 @@ async function sampleAndJudge({ ask, criteria, skillContent }) {
   }
   const { score, reasoning } = parseJudge(j.response);
   return { score, answer: ans.response, reasoning, infraError: score == null ? 'judge_unparseable' : null };
+}
+
+// Pairwise preference judge. Absolute scoring can't separate two near-ceiling
+// answers (everything lands 0.82–0.93), so margins are tiny and noise-dominated.
+// A head-to-head "which answer is better" judge is far more sensitive to small
+// skill lifts. We run it both ways (position-swapped) to cancel order bias.
+function pairwisePrompt(criteria, ask, answerA, answerB) {
+  return `You are an evaluation judge comparing TWO assistant answers to the same task. Decide which one BETTER satisfies the criteria; if they are genuinely equivalent, answer "tie".
+
+TASK (what the user asked):
+${ask}
+
+EVALUATION CRITERIA:
+${criteria}
+
+Judging rules:
+- Answers may reference project-specific scripts, files, tools, or skills assumed to exist in the developer's environment — do NOT penalize that or treat it as hallucinated; judge correctness, specificity, and actionability.
+- Prefer the answer with more concrete, correct, expert guidance (exact commands, flags, paths, parameters, error handling). Ignore differences in length or formatting that don't affect usefulness.
+
+ANSWER A:
+${answerA.slice(0, JUDGE_LOG_CHARS)}
+
+ANSWER B:
+${answerB.slice(0, JUDGE_LOG_CHARS)}
+
+Respond with JSON only: {"winner": "A" | "B" | "tie", "reasoning": "<brief explanation>"}`;
+}
+
+function parsePairwise(text) {
+  const m = text && text.match(/\{[\s\S]*\}/);
+  if (!m) return { winner: null, reasoning: `unparseable: ${(text || '').slice(0, 120)}` };
+  try {
+    const d = JSON.parse(m[0]);
+    const w = String(d.winner || '').trim().toUpperCase();
+    const winner = w === 'A' ? 'A' : w === 'B' ? 'B' : /TIE/.test(w) ? 'tie' : null;
+    return { winner, reasoning: String(d.reasoning || '').slice(0, 300) };
+  } catch {
+    return { winner: null, reasoning: `bad json: ${m[0].slice(0, 120)}` };
+  }
+}
+
+/**
+ * Head-to-head WITH vs BASELINE over `rounds`, alternating which answer is shown
+ * first to cancel position bias. Returns the tally + WITH's win rate over the
+ * *decided* (non-tie, non-error) rounds.
+ */
+async function pairwiseCompare({ ask, criteria, withAnswer, baseAnswer, rounds }) {
+  let withWins = 0; let baseWins = 0; let ties = 0; let invalid = 0;
+  const seq = [];
+  for (let i = 0; i < rounds; i++) {
+    const withIsA = i % 2 === 0; // alternate position each round
+    const a = withIsA ? withAnswer : baseAnswer;
+    const b = withIsA ? baseAnswer : withAnswer;
+    const r = await claudeProse(pairwisePrompt(criteria, ask, a, b), { model: JUDGE_MODEL, maxTokens: 800, timeoutMs: ANSWER_TIMEOUT_MS });
+    if (r.isError || !r.response.trim()) { invalid++; seq.push(`infra:${(r.error || 'empty').toString().slice(0, 40)}`); continue; }
+    const { winner } = parsePairwise(r.response);
+    if (winner == null) { invalid++; seq.push('unparsed'); continue; }
+    if (winner === 'tie') { ties++; seq.push('tie'); continue; }
+    const withWon = (winner === 'A') === withIsA; // map A/B back to WITH/BASE given the swap
+    if (withWon) { withWins++; seq.push('with'); } else { baseWins++; seq.push('base'); }
+  }
+  const decided = withWins + baseWins;
+  return {
+    withWins, baseWins, ties, invalid, rounds,
+    winRate: decided ? Number((withWins / decided).toFixed(3)) : null,
+    seq,
+  };
 }
 
 /**
@@ -128,38 +201,49 @@ export async function evalSkill({ sessionId, skillId, brief, addressesGap, dryRu
       dryRun: true,
       commands: [
         `prose-eval (no tools) — answer model=${EVAL_MODEL}, judge=${JUDGE_MODEL}`,
-        `WITH    : answer "${oneLine}…" with SKILL.md injected, then judge vs criteria`,
-        `BASELINE: same prompt without the skill, then judge vs criteria`,
-        `promote if  with≥${EVAL_PASS}  and  (with-baseline)≥${EVAL_MARGIN}`,
+        `WITH    : answer "${oneLine}…" with SKILL.md injected (+ absolute judge = quality floor)`,
+        `BASELINE: same prompt without the skill (+ absolute judge)`,
+        `PAIRWISE: ${EVAL_SAMPLES} position-swapped head-to-head comparisons → WITH win rate`,
+        `promote if  with≥${EVAL_PASS}  and  winRate≥${EVAL_WIN_RATE}`,
       ],
     };
   }
 
   const skillContent = fs.readFileSync(skillFile, 'utf8');
-  const withR = await sampleAndJudge({ ask, criteria, skillContent });
-  const baseR = await sampleAndJudge({ ask, criteria, skillContent: null });
+  // One answer per arm + an absolute judge (the quality floor) — also yields the
+  // two answers the pairwise judge then compares head-to-head.
+  const withR = await sampleAndJudgeOnce({ ask, criteria, skillContent });
+  const baseR = await sampleAndJudgeOnce({ ask, criteria, skillContent: null });
 
   const withScore = withR.score;
   const baseScore = baseR.score;
   const margin = (withScore != null && baseScore != null) ? Number((withScore - baseScore).toFixed(3)) : null;
 
+  // Pairwise: the sensitive discriminator. Needs both answers to exist.
+  let pairwise = null;
+  if (withR.answer.trim() && baseR.answer.trim()) {
+    pairwise = await pairwiseCompare({ ask, criteria, withAnswer: withR.answer, baseAnswer: baseR.answer, rounds: EVAL_SAMPLES });
+  }
+  const winRate = pairwise?.winRate ?? null;
+
   let verdict;
-  if (withScore == null) verdict = 'error';        // could not even score the candidate
-  else if (baseScore == null) verdict = 'inconclusive';
-  else if (withScore >= EVAL_PASS && margin >= EVAL_MARGIN) verdict = 'promote';
-  else if (margin > 0) verdict = 'weak';           // helped, but under threshold
+  if (withScore == null || !withR.answer.trim() || !baseR.answer.trim()) verdict = 'error'; // couldn't sample/score
+  else if (winRate == null) verdict = 'inconclusive';                 // every pairwise round tied or errored
+  else if (withScore >= EVAL_PASS && winRate >= EVAL_WIN_RATE) verdict = 'promote';
+  else if (winRate > 0.5) verdict = 'weak';                           // preferred, but under the bar
   else verdict = 'reject';
 
-  // Persist everything so a human can see WHY (answers + judge reasoning).
+  // Persist everything so a human can see WHY (answers + judge reasoning + the head-to-head tally).
   fs.writeFileSync(path.join(work, 'result.json'), JSON.stringify({
     skillId, sessionId, model: EVAL_MODEL, judgeModel: JUDGE_MODEL,
-    pass: EVAL_PASS, marginThreshold: EVAL_MARGIN,
-    ask, criteria, withScore, baseScore, margin, verdict,
+    pass: EVAL_PASS, winRateThreshold: EVAL_WIN_RATE, pairwiseRounds: EVAL_SAMPLES,
+    ask, criteria, withScore, baseScore, margin, winRate, verdict, pairwise,
     with: { score: withScore, reasoning: withR.reasoning, infraError: withR.infraError, answer: withR.answer },
     baseline: { score: baseScore, reasoning: baseR.reasoning, infraError: baseR.infraError, answer: baseR.answer },
   }, null, 2));
 
-  const out = { skillId, withScore, baseScore, margin, verdict };
+  const out = { skillId, withScore, baseScore, margin, winRate, verdict };
+  if (pairwise) out.tally = `W${pairwise.withWins}/B${pairwise.baseWins}/T${pairwise.ties}${pairwise.invalid ? `/x${pairwise.invalid}` : ''}`;
   if (withR.infraError || baseR.infraError) out.note = `with:${withR.infraError || 'ok'} base:${baseR.infraError || 'ok'}`;
   return out;
 }
@@ -188,13 +272,13 @@ async function main() {
 
   const res = await evalSession(sessionId, { dryRun, only });
   if (res.error) { console.error('✗ ' + res.error); process.exit(1); }
-  console.log(`[eval-gate] ${sessionId} | model=${EVAL_MODEL} judge=${JUDGE_MODEL} | pass≥${EVAL_PASS} margin≥${EVAL_MARGIN}${dryRun ? ' | DRY-RUN' : ''}`);
+  console.log(`[eval-gate] ${sessionId} | model=${EVAL_MODEL} judge=${JUDGE_MODEL} pairwise=${EVAL_SAMPLES} | pass≥${EVAL_PASS} winRate≥${EVAL_WIN_RATE}${dryRun ? ' | DRY-RUN' : ''}`);
   for (const r of res.results) {
     if (r.dryRun) { console.log(`▸ ${r.skillId}`); r.commands.forEach((c) => console.log(`    ${c}`)); }
     else if (r.error) console.log(`✗ ${r.skillId}: ${r.error}`);
     else {
       const icon = r.verdict === 'promote' ? '✓' : '·';
-      console.log(`${icon} ${r.skillId}: with=${r.withScore} base=${r.baseScore} margin=${r.margin} → ${r.verdict}${r.note ? `  (${r.note})` : ''}`);
+      console.log(`${icon} ${r.skillId}: with=${r.withScore} base=${r.baseScore} win=${r.winRate} ${r.tally || ''} → ${r.verdict}${r.note ? `  (${r.note})` : ''}`);
     }
   }
 }

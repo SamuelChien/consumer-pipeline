@@ -36,11 +36,14 @@ Flow: `connectors (sinks) -> session intelligence -> research agent -> eval gate
 2. **The gap that created a skill becomes the eval that gates it.** For each skill we synthesize the
    user ask + judge criteria from the exact session struggle, sample a prose answer from the eval model
    WITH the skill injected vs a baseline WITHOUT, and a judge model scores each; we promote only if the
-   skill clears `EVAL_PASS` and beats baseline by `EVAL_MARGIN`. **This now produces real signal** — all
-   six skills from session 6bb69f7b score WITH 0.82–0.88 (genuinely good answers), vs a strong Sonnet
-   baseline at 0.87–0.93 (full table in Step F). The old "everything scores 0" failure is fixed, *and* a
-   second bug (the judge tanking skills that cite their own project scripts) was found and fixed; see
-   Section 7 for both root causes and Section 9 for the remaining calibration work.
+   skill clears the `EVAL_PASS` quality floor AND wins a **pairwise head-to-head** against baseline.
+   **This now produces real, sensitive signal.** Absolute scoring alone couldn't separate two strong
+   answers (everything scored 0.82–0.93), so a pairwise judge — "which answer is better?", position-
+   swapped over `EVAL_SAMPLES` rounds — is the discriminator. Proof it works: `bm25` *tied* on absolute
+   (0.88/0.88) yet won the head-to-head **3–0 → promote**, while `gmail` lost **0–2 → reject**. Three
+   bugs were fixed to get here (all-zero infra error; judge "fabrication" bias against skill-cited
+   scripts; absolute-score ceiling) — see Section 7; calibration of the pairwise thresholds is the
+   remaining work (Section 9 #2).
 
 3. **Scope: Claude Code skills, not Nario.** Output is standard `SKILL.md` (name + description +
    optional allowed-tools). The eval gate is a self-contained prose A/B judged by `claude` (it no
@@ -140,10 +143,12 @@ across edits); for skill-bench, line numbers are exact (read directly).
 - `src/eval-gate/synthesize-suite.js` -> `synthesizeTask(brief, skill)` (yields the user `ask` +
   `llm_judge` criteria), `writeSuite()` (still writes the task YAML as a readable artifact)
 - `src/eval-gate/index.js` -> `evalSkill()` samples a prose answer WITH the skill injected vs a baseline
-  WITHOUT (`claudeProse`), then a judge model scores each against the synthesized criteria.
-  `verdict ∈ {promote, weak, reject, inconclusive, error}`; `promote` requires `with≥EVAL_PASS` and
-  `margin≥EVAL_MARGIN`. Writes `output/eval/<sid>/<skill>/result.json` (both answers + judge reasoning +
-  scores) for inspection. `evalSession()`, CLI `--session/--skill/--dry-run`. No skill-bench dependency.
+  WITHOUT (`claudeProse`), runs an **absolute** judge on each (quality floor) **and** a **pairwise**
+  judge head-to-head over `EVAL_SAMPLES` position-swapped rounds (`pairwiseCompare()` — the sensitive
+  discriminator). `verdict ∈ {promote, weak, reject, inconclusive, error}`; `promote` requires
+  `withScore≥EVAL_PASS` AND pairwise `winRate≥EVAL_WIN_RATE`. Writes
+  `output/eval/<sid>/<skill>/result.json` (both answers + judge reasoning + the head-to-head tally) for
+  inspection. `evalSession()`, CLI `--session/--skill/--dry-run`. No skill-bench dependency.
 
 ### Promote
 - `src/promote/index.js` -> `promoteSkill()`, `promoteSession()` (install into a skills dir; dry unless
@@ -251,23 +256,28 @@ Dry run (free, no claude spawned):
 npm run eval-gate -- --session 6bb69f7b-a0f2-4047-804a-9c55b5fb1928 --skill bm25-pagerank-corpus-index --dry-run
 ```
 ```
-[eval-gate] 6bb69f7b… | model=claude-sonnet-4-6 judge=claude-sonnet-4-6 | pass≥0.7 margin≥0.1 | DRY-RUN
-▸ bm25-pagerank-corpus-index
+[eval-gate] 6bb69f7b… | model=claude-sonnet-4-6 judge=claude-sonnet-4-6 pairwise=4 | pass≥0.7 winRate≥0.6 | DRY-RUN
+▸ gmail-bulk-triage-mcp
     prose-eval (no tools) — answer model=claude-sonnet-4-6, judge=claude-sonnet-4-6
-    WITH    : answer "Connect to Gmail…" with SKILL.md injected, then judge vs criteria
-    BASELINE: same prompt without the skill, then judge vs criteria
-    promote if  with≥0.7  and  (with-baseline)≥0.1
+    WITH    : answer "Connect to Gmail…" with SKILL.md injected (+ absolute judge = quality floor)
+    BASELINE: same prompt without the skill (+ absolute judge)
+    PAIRWISE: 4 position-swapped head-to-head comparisons → WITH win rate
+    promote if  with≥0.7  and  winRate≥0.6
 ```
-Live (4 `claude` calls/skill: with-answer, with-judge, base-answer, base-judge — serialized, ~2 min/skill):
+Live (`4 + EVAL_SAMPLES` serialized `claude` calls/skill: 2 answers + 2 absolute judges + `EVAL_SAMPLES` pairwise rounds; default 4 → 8 calls, ~5–7 min/skill):
 ```bash
 npm run eval-gate -- --session 6bb69f7b-a0f2-4047-804a-9c55b5fb1928 --skill gmail-bulk-triage-mcp
 ```
-Real observed output (post-fix — the gate produces real, grounded scores; full table in Step F):
+Real observed output (pairwise — `win` is WITH's win rate over decided rounds, `Wx/Bx/Tx/xN` = with/base/tie/invalid):
 ```
-· gmail-bulk-triage-mcp: with=0.87 base=0.93 margin=-0.06 → reject
+✓ bm25-pagerank-corpus-index:  with=0.88 base=0.88 win=1   W3/B0/T0/x1 → promote   # absolute TIED, pairwise broke it
+· gmail-bulk-triage-mcp:        with=0.9  base=0.95 win=0   W0/B2/T0/x2 → reject
+· enrich-skill-metadata-bulk:   with=0.88 base=0.9  win=—   W0/B0/T0/x4 → inconclusive  # all rounds rate-limited (gotcha)
 ```
-Each run writes `output/eval/<sid>/<skill>/result.json` with BOTH full answers + the judge's reasoning
-+ scores, so you can see *why*. (The synthesized task YAML is still written under `…/tasks/` too.)
+The `bm25` row is the whole point: absolute scoring called it a 0.88/0.88 tie, but the head-to-head said
+WITH wins 3–0. `enrich` shows the gate degrading *honestly* to `inconclusive` when every pairwise round
+failed under rate-limit contention (run standalone — see Gotchas). Each run writes
+`output/eval/<sid>/<skill>/result.json` with BOTH full answers, judge reasoning, and the head-to-head tally.
 The judge reasoning is grounded: for `gmail` the WITH answer was credited for "exact quota numbers, a
 bounded-loop pattern with hard MAX_BUDGET, two exit conditions, safe vs. dangerous query strings" — all
 straight from the skill (it scores 0.87, a genuinely good answer; the baseline just scores a touch higher
@@ -288,25 +298,21 @@ Observed install:
 # eval is on by default now (self-contained); --reuse skips re-paying for research; promote is dry
 node src/flywheel.js --session 6bb69f7b-a0f2-4047-804a-9c55b5fb1928 --reuse
 ```
-The flywheel evaluates every skill through the gate and prints, per skill,
-`· <skill>: with=<w> base=<b> margin=<m> → <verdict>`, then promotes only those with verdict `promote`.
-Real **post-fix** per-skill scores (single-sample eval-gate runs on session 6bb69f7b — the flywheel
-prints these same numbers; a fresh run wobbles ±noise):
+The flywheel evaluates every skill through the **pairwise** gate and prints, per skill,
+`· <skill>: with=<absScore> base=<absScore> win=<winRate> W../B../T../x.. → <verdict>`, then promotes
+only verdict `promote`. Confirmed pairwise results (run skills standalone — see Gotchas — for clean
+numbers; under contention some rounds invalidate as the `enrich` row shows):
 
-| skill | with | base | margin | verdict |
-|---|---|---|---|---|
-| `bm25-pagerank-corpus-index` | 0.87 | 0.92 | −0.05 | reject |
-| `enrich-skill-metadata-bulk` | 0.88 | 0.87 | +0.01 | weak |
-| `evaluate-skill-corpus-quality` | 0.82 | 0.90 | −0.08 | reject |
-| `run-skills-intelligence-pipeline` | 0.85 | 0.93 | −0.08 | reject |
-| `gmail-bulk-triage-mcp` | 0.87 | 0.93 | −0.06 | reject |
-| `skills-at-scale-architecture` | 0.88 | 0.88 | 0.00 | reject |
+| skill | with (abs) | base (abs) | winRate | tally | verdict |
+|---|---|---|---|---|---|
+| `bm25-pagerank-corpus-index` | 0.88 | 0.88 | 1.00 | W3/B0/T0/x1 | **promote** |
+| `gmail-bulk-triage-mcp` | 0.90 | 0.95 | 0.00 | W0/B2/T0/x2 | reject |
+| `enrich-skill-metadata-bulk` | 0.88 | 0.90 | — | W0/B0/T0/x4 | inconclusive (rate-limited) |
 
-Honest read: with the judge bias fixed, every WITH answer is a genuinely good answer (0.82–0.88), but none
-clears `margin≥0.1` against a strong Sonnet baseline on these generic synthesized questions, and
-single-sample noise (~±0.05–0.1) swamps the small real differences. So `0/6` promote today — the gate
-is *correct and unbiased* but not yet *decisive*; Section 9 #2 (multi-sampling + threshold calibration)
-is what turns it into an auto-installer. To install now while you calibrate, run with eval off:
+Honest read: pairwise is doing exactly what absolute margins couldn't — it found that `bm25` (an
+absolute *tie*) actually wins 3–0, and that `gmail` loses. The remaining work (Section 9 #2) is a clean
+full-session run + tuning `EVAL_WIN_RATE`/`EVAL_PASS` from the win-rate distribution, plus the rate-limit
+robustness already improved (exponential backoff). To install now while you calibrate, run with eval off:
 ```bash
 node src/flywheel.js --session 6bb69f7b-a0f2-4047-804a-9c55b5fb1928 --reuse --no-eval --install
 # [flywheel] done — 6 skills, 6 installed, ~$0.00
@@ -406,6 +412,21 @@ which still penalizes vague/wrong guidance. Effect (same skills, re-run): `evalu
 context-free judge treats project-specific references as hallucination; bake the "assume it exists"
 assumption into the judge or every skill that cites real tooling gets unfairly sunk.
 
+### The absolute-score ceiling (third bug → pairwise judging)
+With the bias fixed, all answers landed 0.82–0.93 — and the WITH/baseline *difference* (≤0.08) was below
+the judge's own noise. Absolute scoring near the ceiling simply can't separate two good answers, so
+`margin≥0.1` never fired and nothing promoted regardless of real quality. Fix: **pairwise preference
+judging** (`pairwiseCompare()` in `src/eval-gate/index.js`) — show the judge BOTH answers and ask which
+is better, over `EVAL_SAMPLES` position-swapped rounds (swap cancels the well-known first-position bias).
+WITH must win ≥`EVAL_WIN_RATE` of *decided* rounds. This is how `bm25` (absolute tie 0.88/0.88) resolved
+to a clean 3–0 promote. Absolute scoring is kept only as a quality floor (`EVAL_PASS`). This mirrors how
+LLM-eval harnesses (MT-Bench/AlpacaEval) and the 2026 self-improving-skills papers (EvoSkills, ASG-SI)
+score — preference/verifier-gated, not absolute. **Lesson:** for "did X help vs Y" with strong models,
+pairwise A/B beats absolute scoring every time; reach for it whenever your deltas live near the ceiling.
+- Robustness: the pairwise prompt embeds two full answers, so calls are heavier; under rate-limit
+  contention some rounds invalidate (`infra:` in `pairwise.seq`). `claudeProse` retries with exponential
+  backoff (4/8/16s); run the gate standalone for clean numbers (Gotchas).
+
 ### skill-bench (still the harness for agentic evals; reference, do not guess)
 - CLI entry `engine.cli:main`; `run` at `engine/cli.py:75`: positional `tasks_dir`, `--skills/-s`,
   `--model/-m`, `--output/-o`, `--sampler cli|deployment`, `--deployment-url`. `--system-prompt` /
@@ -426,6 +447,13 @@ assumption into the judge or every skill that cites real tooling gets unfairly s
 - The research agent never writes skills itself; it only returns JSON that the orchestrator persists.
 
 ### Gotchas hit during the build
+- **Eval rate-limit contention.** The gate spawns many `claude -p` subprocesses; running it *while an
+  interactive Claude Code session (or other heavy claude usage) hits the same account* causes
+  intermittent failures — they show up as `infra:<error>` entries in `result.json` `pairwise.seq` and as
+  `xN` in the CLI tally. `claudeProse` retries with exponential backoff (4/8/16s) and invalid rounds are
+  dropped (winRate is over *decided* rounds), but for clean numbers run the gate **standalone** (not
+  nested inside another claude session). A single call in isolation always succeeds; the failures are
+  contention, not the prompt or wiring.
 - zsh: `grep --include=*.py` fails on "no matches"; quote it (`--include="*.py"`).
 - The Read tool deduplicates on background task output files; use `tail` on the log path instead.
 - `shallow.repos[]` often includes the bare dev root; we sort for the deepest repo as `cwd`.
@@ -444,7 +472,7 @@ assumption into the judge or every skill that cites real tooling gets unfairly s
 | Web UI | Verified (all routes serve) |
 | Promote | Verified live (6 installed) |
 | Flywheel | Verified live end to end (eval on, dry promote) |
-| Eval gate | **Verified live — produces real, unbiased signal** (self-contained prose A/B + judge). All 6 skills score WITH 0.82–0.88 vs baseline 0.87–0.93 (Step F). TWO bugs fixed: the all-zero infra-error AND a judge bias that tanked script-citing skills (Section 7). Thresholds + multi-sampling still need calibration (Section 9 #2). |
+| Eval gate | **Verified live — pairwise gate produces sensitive, unbiased signal** (self-contained, no skill-bench). Absolute quality floor + position-swapped pairwise judge. Proof: `bm25` won 3–0 head-to-head where absolute scoring tied 0.88/0.88 → promote; `gmail` lost 0–2 → reject. THREE bugs fixed: all-zero infra-error, judge "fabrication" bias, absolute-score ceiling (Section 7). Remaining: clean full-session run + threshold calibration; rate-limit backoff hardened (Section 9 #2, Gotchas). |
 
 ---
 
@@ -453,13 +481,15 @@ assumption into the judge or every skill that cites real tooling gets unfairly s
 1. ~~**Eval gate produces no signal (blocker).**~~ **DONE (2026-05-28).** Root cause was skill-bench's
    agentic CLISampler tool-detouring under `--max-turns 1` (Section 7), not the scorer. Rebuilt the gate
    as a self-contained prose A/B + judge (`claudeProse`). It now scores 0..1 with real reasoning.
-2. **Calibrate thresholds + cut judge noise (now the top item).** With real data the defaults are
-   `EVAL_PASS=0.7`, `EVAL_MARGIN=0.1`, judge `EVAL_JUDGE_MODEL=EVAL_MODEL`. Observed margins are tiny
-   (±0.01–0.03) against a strong Sonnet baseline and single-sample judging has ~±0.05 noise, so almost
-   nothing clears `margin≥0.1` today. Next: (a) average **n samples** per arm (add a loop in
-   `sampleAndJudge`) to shrink noise; (b) consider a stronger/stricter judge or a rubric that rewards the
-   skill's *specific* commands/paths; (c) re-pick thresholds from the resulting distribution. The gate is
-   honest as-is (it just rarely says "promote") — calibration makes it *useful* for auto-install.
+2. **Calibrate the pairwise thresholds (the remaining gate work).** The gate now uses **pairwise
+   preference judging** (the deep fix), not absolute margins: absolute scoring couldn't separate two
+   strong near-ceiling answers (everything landed 0.82–0.93, so `margin≥0.1` never triggered). `evalSkill`
+   now (a) keeps a single **absolute** judge per arm as a quality floor (`EVAL_PASS=0.7`) and (b) runs a
+   **pairwise** judge head-to-head over `EVAL_SAMPLES=4` position-swapped rounds; `promote` requires
+   `winRate≥EVAL_WIN_RATE=0.6`. Remaining: (i) once a few sessions' `result.json` exist, re-pick
+   `EVAL_WIN_RATE` / `EVAL_PASS` / `EVAL_SAMPLES` from the observed win-rate distribution; (ii) optionally
+   a stronger judge model (`EVAL_JUDGE_MODEL`) for borderline cases. The thresholds are first guesses —
+   defensible, but tune them with real data before trusting `--install` for auto-promotion.
 3. **Merge** the PR to `main` (currently only on `skill-flywheel-v2`).
 4. **Multi-producer is modeled, not wired.** Connectors carry `producer:{kind,id}`, but research and
    gap-ranking do not use it for team-wide ranking, per-producer partitioning, or sink-side
@@ -497,8 +527,10 @@ assumption into the judge or every skill that cites real tooling gets unfairly s
 | `SKILL_BENCH_CMD` | `skill-bench` | (no longer used by the gate; only legacy/agentic skill-bench runs) |
 | `EVAL_MODEL` | `claude-sonnet-4-6` | eval gate (answer model) |
 | `EVAL_JUDGE_MODEL` | `=EVAL_MODEL` | eval gate (judge model; set higher for a stricter judge) |
-| `EVAL_PASS` | `0.7` | eval gate (candidate must clear) |
-| `EVAL_MARGIN` | `0.1` | eval gate (must beat baseline by) |
+| `EVAL_PASS` | `0.7` | eval gate (absolute quality floor — WITH answer's absolute judge score must clear this) |
+| `EVAL_WIN_RATE` | `0.6` | eval gate (WITH must win ≥ this share of *decided* pairwise rounds to promote) |
+| `EVAL_SAMPLES` | `4` | eval gate (pairwise comparison rounds, position-swapped) |
+| `EVAL_MARGIN` | `0.1` | eval gate (informational only now — absolute `withScore−baseScore`; the verdict uses winRate, not margin) |
 | `EVAL_TASK_TIMEOUT` | `300` | eval gate (seconds per claude call) |
 | `SKILLS_TARGET_DIR` | `<OUTPUT_DIR>/promoted-skills` | promote (set to `~/.claude/skills` to go live) |
 | `PORT` | `8080` | web server |

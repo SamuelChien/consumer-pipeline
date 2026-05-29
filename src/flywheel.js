@@ -79,7 +79,7 @@ async function main() {
       console.log(`  eval: ${passed}/${skills.length} pass`);
       for (const v of Object.values(verdicts)) {
         if (v.error) console.log(`     ✗ ${v.skillId}: ${v.error}`);
-        else console.log(`     ${v.verdict === 'promote' ? '✓' : '·'} ${v.skillId}: with=${v.withScore} base=${v.baseScore} margin=${v.margin} → ${v.verdict}`);
+        else console.log(`     ${v.verdict === 'promote' ? '✓' : '·'} ${v.skillId}: with=${v.withScore} base=${v.baseScore} win=${v.winRate} ${v.tally || ''} → ${v.verdict}`);
       }
     } else {
       console.log('  eval: skipped (--no-eval) — promoting all generated');
